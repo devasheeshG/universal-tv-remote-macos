@@ -89,6 +89,14 @@ struct TVApp: Identifiable, Hashable {
     let name: String
     let id: String
     var domain: String? = nil
+    /// Icon URL supplied by the TV itself (Fire TV's Amazon CDN art, Roku's
+    /// /query/icon, LG's listApps icons). Beats any lookup when present.
+    var iconArt: String? = nil
+
+    /// Ordering weight so household staples lead the collapsed row; apps the
+    /// TV lists that we don't recognize keep their device order after them.
+    static let favorites = ["Netflix", "YouTube", "Prime Video", "Disney+", "Spotify", "Max", "Hulu"]
+    var favoriteRank: Int { TVApp.favorites.firstIndex(where: { name.hasPrefix($0) }) ?? Int.max }
 
     /// Favicon lookup for names that arrive without a domain (Roku's live
     /// channel list) — best-effort, unknown apps fall back to a letter avatar.
@@ -100,11 +108,13 @@ struct TVApp: Identifiable, Hashable {
         "Twitch": "twitch.tv", "Crunchyroll": "crunchyroll.com",
     ]
 
-    /// URL of a 64 px icon for this app, or nil when we have no domain.
+    /// Best icon we can point AsyncImage at without a lookup: the TV's own
+    /// art when it gave us any, else the service's favicon, else nil.
     var iconURL: URL? {
+        if let iconArt { return URL(string: iconArt) }
         let resolved = domain ?? TVApp.knownDomains[name]
         guard let resolved else { return nil }
-        return URL(string: "https://www.google.com/s2/favicons?domain=\(resolved)&sz=64")
+        return URL(string: "https://www.google.com/s2/favicons?domain=\(resolved)&sz=128")
     }
 }
 
@@ -140,6 +150,9 @@ protocol TVDriver: AnyObject {
     /// Fired when the TV hands us a credential worth persisting (Samsung/LG
     /// token or client-key, Fire TV token, Android TV "paired" marker).
     var onTokenIssued: ((String) -> Void)? { get set }
+    /// Fired when the driver learns what's actually installed on the TV and
+    /// `apps` changed as a result (Fire TV/Roku/LG query live lists).
+    var onAppsChanged: (() -> Void)? { get set }
 
     /// Open the control channel. `token` is the previously persisted
     /// credential, or nil on first contact (which starts pairing).
@@ -164,6 +177,9 @@ protocol TVDriver: AnyObject {
 final class RemoteSession: ObservableObject {
     let device: DiscoveredTV
     @Published private(set) var state: SessionState = .idle
+    /// What the shortcut row shows. Starts as the driver's static catalog and
+    /// is replaced by the live installed-apps list once the driver has one.
+    @Published private(set) var apps: [TVApp] = []
 
     private let driver: TVDriver
     private var tokenKey: String { "token.\(device.id)" }
@@ -171,6 +187,7 @@ final class RemoteSession: ObservableObject {
     init(device: DiscoveredTV) {
         self.device = device
         self.driver = RemoteSession.makeDriver(for: device)
+        self.apps = driver.apps
 
         // Driver callbacks arrive on arbitrary queues; SwiftUI requires main.
         driver.onStateChange = { [weak self] newState in
@@ -179,6 +196,9 @@ final class RemoteSession: ObservableObject {
         driver.onTokenIssued = { [weak self] token in
             guard let self else { return }
             UserDefaults.standard.set(token, forKey: self.tokenKey)
+        }
+        driver.onAppsChanged = { [weak self] in
+            DispatchQueue.main.async { self?.apps = self?.driver.apps ?? [] }
         }
     }
 
@@ -210,7 +230,6 @@ final class RemoteSession: ObservableObject {
     func send(_ key: RemoteKey) { driver.send(key) }
     func sendText(_ text: String) { driver.sendText(text) }
     func launchApp(_ appID: String) { driver.launchApp(appID) }
-    var apps: [TVApp] { driver.apps }
 }
 
 // MARK: - Shared power-on plumbing (used by Samsung + LG drivers)

@@ -30,6 +30,9 @@ import AndroidTVRemoteControl
 final class AndroidTVDriver: TVDriver {
     var onStateChange: ((SessionState) -> Void)?
     var onTokenIssued: ((String) -> Void)?
+    /// Never fired: the Remote v2 protocol has no installed-apps query, so
+    /// Android TV keeps its curated deep-link catalog.
+    var onAppsChanged: (() -> Void)?
 
     private let device: DiscoveredTV
     private let cryptoManager = CryptoManager()

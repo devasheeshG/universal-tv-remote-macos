@@ -26,6 +26,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 import ServiceManagement
 
 // MARK: - App state
@@ -43,6 +44,9 @@ final class AppState: ObservableObject {
     private var sessions: [String: RemoteSession] = [:]
     private var keyMonitor: Any?
     private var mediaKeyMonitor: Any?
+    /// SwiftUI doesn't observe nested ObservableObjects, so the active
+    /// session's changes (state, live app list) are forwarded to ours.
+    private var sessionForwarder: AnyCancellable?
 
     init() {
         discovery.start()
@@ -57,6 +61,8 @@ final class AppState: ObservableObject {
         let session = sessions[device.id] ?? RemoteSession(device: device)
         sessions[device.id] = session
         self.session = session
+        sessionForwarder = session.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
         UserDefaults.standard.set(device.id, forKey: "selectedDevice")
         // (Re)connect unless a healthy connection already exists.
         switch session.state {
@@ -685,7 +691,13 @@ struct AppIconButton: View {
         }
         .buttonStyle(PressableStyle())
         .help(app.name)
-        .task(id: app.id) { artworkURL = await AppIconResolver.artworkURL(for: app.name) }
+        .task(id: app.id) {
+            // The TV's own art wins; the store lookup is only for catalog
+            // entries that came without one.
+            if app.iconArt == nil {
+                artworkURL = await AppIconResolver.artworkURL(for: app.name)
+            }
+        }
     }
 
     private var letterAvatar: some View {

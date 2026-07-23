@@ -24,6 +24,7 @@ import Foundation
 final class RokuDriver: TVDriver {
     var onStateChange: ((SessionState) -> Void)?
     var onTokenIssued: ((String) -> Void)?
+    var onAppsChanged: (() -> Void)?
 
     private let device: DiscoveredTV
     private let base: URL
@@ -139,14 +140,17 @@ final class RokuDriver: TVDriver {
         session.dataTask(with: request) { [weak self] data, _, _ in
             guard let self, let xml = String(data: data ?? Data(), encoding: .utf8) else { return }
             let pattern = #/<app id="([^"]+)"[^>]*>([^<]+)</app>/#
-            let found = xml.matches(of: pattern).map { TVApp(name: String($0.2), id: String($0.1)) }
-            // Keep the row short and useful: prefer the well-known streaming
-            // apps if installed, else just the first few channels.
-            if !found.isEmpty {
-                let favorites = ["Netflix", "YouTube", "Prime Video", "Disney+", "Spotify", "Hulu"]
-                let preferred = found.filter { favorites.contains($0.name) }
-                self.liveApps = preferred.isEmpty ? Array(found.prefix(6)) : preferred
+            // Everything the box reports is by definition installed; the box
+            // also serves each channel's icon over ECP.
+            let found = xml.matches(of: pattern).map {
+                TVApp(name: String($0.2), id: String($0.1),
+                      iconArt: self.base.appendingPathComponent("query/icon/\($0.1)").absoluteString)
             }
+            guard !found.isEmpty else { return }
+            self.liveApps = found.enumerated()
+                .sorted { ($0.element.favoriteRank, $0.offset) < ($1.element.favoriteRank, $1.offset) }
+                .map(\.element)
+            self.onAppsChanged?()
         }.resume()
     }
 }

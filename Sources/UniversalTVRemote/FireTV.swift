@@ -30,6 +30,11 @@ import Foundation
 final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
     var onStateChange: ((SessionState) -> Void)?
     var onTokenIssued: ((String) -> Void)?
+    var onAppsChanged: (() -> Void)?
+
+    /// The TV's real installed-app list, fetched after connecting. While nil
+    /// the static catalog below stands in.
+    private var liveApps: [TVApp]?
 
     private let device: DiscoveredTV
     private let base: URL
@@ -60,6 +65,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
                 guard let self else { return }
                 if response != nil {
                     self.onStateChange?(.connected)
+                    self.fetchInstalledApps()
                 } else {
                     // Service down — probably asleep. Fire the DIAL wake and
                     // re-probe once; Fire TVs need a few seconds to boot it.
@@ -70,6 +76,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
                         self.session.dataTask(with: retry) { _, response2, _ in
                             if response2 != nil {
                                 self.onStateChange?(.connected)
+                                self.fetchInstalledApps()
                             } else {
                                 self.onStateChange?(.failed("Fire TV unreachable at \(self.device.host)"))
                             }
@@ -113,6 +120,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
                 self.token = newToken
                 self.onTokenIssued?(newToken)
                 self.onStateChange?(.connected)
+                self.fetchInstalledApps()
             } else {
                 self.onStateChange?(.failed("Wrong PIN — pick the TV again to retry"))
             }
@@ -171,12 +179,12 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         post(path: "v1/FireTV/app/\(appID)", query: nil, body: nil)
     }
 
-    /// Fire OS package names, taken from the uc-intg-firetv app database.
-    /// Ordered by popularity: the UI shows the first few collapsed and the
-    /// whole list expanded. Launching an app that isn't installed is a no-op
-    /// on the TV, so an over-complete catalog is harmless.
+    /// The TV's own installed-apps list once fetched; before that, a static
+    /// catalog of common Fire OS packages (from the uc-intg-firetv database)
+    /// so the row isn't empty during the first connect.
     var apps: [TVApp] {
-        [
+        if let liveApps { return liveApps }
+        return [
             TVApp(name: "Netflix", id: "com.netflix.ninja", domain: "netflix.com"),
             TVApp(name: "Prime Video", id: "com.amazon.avod", domain: "primevideo.com"),
             TVApp(name: "YouTube", id: "com.amazon.firetv.youtube", domain: "youtube.com"),
@@ -193,6 +201,49 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
     }
 
     // MARK: internals
+
+    /// GET /v1/FireTV/apps — an undocumented but very real endpoint that
+    /// returns exactly what the shortcut row wants:
+    ///   [{"appId": "com.netflix.ninja", "name": "Netflix",
+    ///     "iconArtSmallUri": "https://m.media-amazon.com/…png",
+    ///     "isInstalled": true}, …]
+    /// (Discovered by probing; not in any reference implementation.)
+    private func fetchInstalledApps() {
+        var request = URLRequest(url: base.appendingPathComponent("v1/FireTV/apps"))
+        request.allHTTPHeaderFields = headers()
+        session.dataTask(with: request) { [weak self] data, response, _ in
+            guard let self,
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let data,
+                  let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  !list.isEmpty else { return }   // endpoint missing → keep static catalog
+            let apps = list.compactMap { entry -> TVApp? in
+                guard entry["isInstalled"] as? Bool == true,
+                      let id = entry["appId"] as? String,
+                      var name = entry["name"] as? String else { return nil }
+                // Store listings are chatty ("Spotify - Music and Podcasts",
+                // "VLC for Fire") — keep just the product name for the tile.
+                name = name.components(separatedBy: " - ")[0]
+                    .components(separatedBy: ":")[0]
+                    .replacingOccurrences(of: " for Fire TV", with: "")
+                    .replacingOccurrences(of: " for Fire", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                return TVApp(name: name, id: id, iconArt: entry["iconArtSmallUri"] as? String)
+            }
+            guard !apps.isEmpty else { return }
+            var installed = apps
+            // The endpoint only lists store-installed apps; Prime Video is
+            // part of Fire OS itself and never appears, yet always exists.
+            if !installed.contains(where: { $0.id == "com.amazon.avod" }) {
+                installed.append(TVApp(name: "Prime Video", id: "com.amazon.avod", domain: "primevideo.com"))
+            }
+            // Household staples first, everything else in the TV's order.
+            self.liveApps = installed.enumerated()
+                .sorted { ($0.element.favoriteRank, $0.offset) < ($1.element.favoriteRank, $1.offset) }
+                .map(\.element)
+            self.onAppsChanged?()
+        }.resume()
+    }
 
     private func headers(includeToken: Bool = true) -> [String: String] {
         var headers = [

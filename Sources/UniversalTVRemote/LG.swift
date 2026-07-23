@@ -31,6 +31,11 @@ import Foundation
 final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
     var onStateChange: ((SessionState) -> Void)?
     var onTokenIssued: ((String) -> Void)?
+    var onAppsChanged: (() -> Void)?
+
+    /// Real installed apps from listApps (system apps filtered out); nil
+    /// until the TV answers.
+    private var liveApps: [TVApp]?
 
     private let device: DiscoveredTV
     private var socket: URLSessionWebSocketTask?
@@ -124,9 +129,11 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
         request(uri: "ssap://system.launcher/launch", payload: ["id": appID])
     }
 
-    /// webOS app ids (stable across firmware versions per aiowebostv docs).
+    /// The TV's installed list once known; until then, well-known webOS app
+    /// ids (stable across firmware versions per aiowebostv docs).
     var apps: [TVApp] {
-        [
+        if let liveApps { return liveApps }
+        return [
             TVApp(name: "Netflix", id: "netflix", domain: "netflix.com"),
             TVApp(name: "YouTube", id: "youtube.leanback.v4", domain: "youtube.com"),
             TVApp(name: "Prime Video", id: "amazon", domain: "primevideo.com"),
@@ -211,6 +218,8 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
             }
             onStateChange?(.connected)
             requestPointerInputSocket()
+            // Ask for the real installed-apps list (answered in handle()).
+            request(uri: "ssap://com.webos.applicationManager/listApps", payload: nil)
             if let mac = macAddressFromARP(ip: device.host) {
                 UserDefaults.standard.set(mac, forKey: macKey)
             }
@@ -225,6 +234,23 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
             // Answer to getPointerInputSocket: connect the button channel.
             inputSocket = session.webSocketTask(with: URL(string: socketPath)!)
             inputSocket?.resume()
+        } else if type == "response",
+                  let appList = payload?["apps"] as? [[String: Any]] {
+            // Answer to listApps. It includes dozens of system components
+            // (com.webos.*, com.palm.*) — keep only real user-facing apps.
+            let installed = appList.compactMap { entry -> TVApp? in
+                guard let id = entry["id"] as? String,
+                      let title = entry["title"] as? String,
+                      !id.hasPrefix("com.webos"), !id.hasPrefix("com.palm"),
+                      entry["visible"] as? Bool != false else { return nil }
+                return TVApp(name: title, id: id, iconArt: entry["icon"] as? String)
+            }
+            if !installed.isEmpty {
+                liveApps = installed.enumerated()
+                    .sorted { ($0.element.favoriteRank, $0.offset) < ($1.element.favoriteRank, $1.offset) }
+                    .map(\.element)
+                onAppsChanged?()
+            }
         }
     }
 

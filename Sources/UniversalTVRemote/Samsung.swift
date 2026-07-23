@@ -34,6 +34,11 @@ import Foundation
 final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLSessionDelegate {
     var onStateChange: ((SessionState) -> Void)?
     var onTokenIssued: ((String) -> Void)?
+    var onAppsChanged: (() -> Void)?
+
+    /// Catalog filtered down to what the TV reports installed (see
+    /// filterInstalledApps); nil until that probe finishes.
+    private var liveApps: [TVApp]?
 
     private let device: DiscoveredTV
     private var socket: URLSessionWebSocketTask?
@@ -155,8 +160,10 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
 
     /// Tizen app ids, collected from samsung-tv-ws-api issue threads — these
     /// are stable store ids, but Samsung has been known to change them.
+    /// Filtered to installed apps once the :8001 probe completes.
     var apps: [TVApp] {
-        [
+        if let liveApps { return liveApps }
+        return [
             TVApp(name: "Netflix", id: "11101200001", domain: "netflix.com"),
             TVApp(name: "YouTube", id: "111299001912", domain: "youtube.com"),
             TVApp(name: "Prime Video", id: "3201512006785", domain: "primevideo.com"),
@@ -197,9 +204,33 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
                     }
                     self.onStateChange?(.connected)
                     self.cacheMACForWakeOnLAN()
+                    self.filterInstalledApps()
                 }
                 self.receiveLoop()   // keep listening
             }
+        }
+    }
+
+    /// GET :8001/api/v2/applications/<id> answers 200 for installed apps and
+    /// 404 for absent ones — probe the catalog and keep only what's there.
+    /// If nothing probes positive (older firmware without the endpoint) the
+    /// static catalog stays.
+    private func filterInstalledApps() {
+        let catalog = apps
+        var installed: [TVApp] = []
+        let group = DispatchGroup()
+        for app in catalog {
+            group.enter()
+            let url = URL(string: "http://\(device.host):8001/api/v2/applications/\(app.id)")!
+            session.dataTask(with: URLRequest(url: url, timeoutInterval: 5)) { _, response, _ in
+                if (response as? HTTPURLResponse)?.statusCode == 200 { installed.append(app) }
+                group.leave()
+            }.resume()
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self, !installed.isEmpty else { return }
+            self.liveApps = catalog.filter { app in installed.contains(where: { $0.id == app.id }) }
+            self.onAppsChanged?()
         }
     }
 
