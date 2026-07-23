@@ -64,6 +64,17 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         persist()
     }
 
+    /// Manually add a TV that discovery didn't find (different subnet, mDNS
+    /// blocked by the router, etc.). The user supplies brand + IP; we still
+    /// try to upgrade the placeholder name from the device itself.
+    func addManual(brand: TVBrand, host: String) -> DiscoveredTV {
+        let device = DiscoveredTV(id: "\(brand.rawValue):\(host)", brand: brand,
+                                  name: "\(brand.displayName) (\(host))", host: host, port: nil)
+        upsert(device)
+        fetchFriendlyName(for: device)
+        return device
+    }
+
     // MARK: Bonjour (Fire TV + Android TV)
 
     private func startBonjourBrowser(serviceType: String, brand: TVBrand) {

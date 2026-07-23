@@ -148,11 +148,19 @@ struct RemoteView: View {
     @State private var pinInput = ""
     @State private var textInput = ""
     @FocusState private var typingFocused: Bool
+    // Manual "Add TV by IP" form state (shown in place of the status area).
+    @State private var addingManually = false
+    @State private var manualBrand: TVBrand = .fireTV
+    @State private var manualIP = ""
 
     var body: some View {
         VStack(spacing: 14) {
             header
-            statusSection
+            if addingManually {
+                addTVForm
+            } else {
+                statusSection
+            }
             if case .connected = state.session?.state {
                 dpad
                 controlRows
@@ -218,6 +226,8 @@ struct RemoteView: View {
                           systemImage: device.brand.symbolName)
                 }
             }
+            Divider()
+            Button("Add TV by IP…") { addingManually = true }
         } label: {
             HStack(spacing: 4) {
                 Text(state.session?.device.name ?? "Choose a TV")
@@ -308,6 +318,42 @@ struct RemoteView: View {
                 }
             }
         }
+    }
+
+    // MARK: manual add (for TVs discovery can't see)
+
+    private var addTVForm: some View {
+        VStack(spacing: 8) {
+            Picker("Brand", selection: $manualBrand) {
+                ForEach(TVBrand.allCases, id: \.self) { brand in
+                    Text(brand.displayName).tag(brand)
+                }
+            }
+            .pickerStyle(.menu)
+            TextField("IP address (e.g. 192.168.1.42)", text: $manualIP)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(addManualTV)
+            HStack {
+                Button("Cancel") { addingManually = false; manualIP = "" }
+                    .controlSize(.small)
+                Button("Add & Connect", action: addManualTV)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    // Loose sanity check only — DNS names are fine too.
+                    .disabled(manualIP.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.05)))
+    }
+
+    private func addManualTV() {
+        let host = manualIP.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else { return }
+        let device = state.discovery.addManual(brand: manualBrand, host: host)
+        addingManually = false
+        manualIP = ""
+        state.select(device)
     }
 
     private func submitPIN() {
