@@ -41,9 +41,22 @@ final class AppState: ObservableObject {
     /// must not fire mid-typing.
     var textFieldFocused = false
 
+    /// Bumped every time a keyboard shortcut fires a key; the on-screen
+    /// controls watch this to flash their press animation. `lastKey` says
+    /// which control to light up.
+    @Published private(set) var keyPulse = 0
+    private(set) var lastKey: RemoteKey = .ok
+
+    /// Send a key to the TV AND pulse the matching on-screen control, so a
+    /// keyboard press lights up the remote exactly like a click does.
+    func fire(_ key: RemoteKey) {
+        session?.send(key)
+        lastKey = key
+        keyPulse &+= 1
+    }
+
     private var sessions: [String: RemoteSession] = [:]
     private var keyMonitor: Any?
-    private var mediaKeyMonitor: Any?
     /// SwiftUI doesn't observe nested ObservableObjects, so the active
     /// session's changes (state, live app list) are forwarded to ours.
     private var sessionForwarder: AnyCancellable?
@@ -85,53 +98,31 @@ final class AppState: ObservableObject {
         // shortcuts. Returning nil swallows the event; returning it lets the
         // system keep processing (crucial while the text field is focused).
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let session = self.session, !self.textFieldFocused else { return event }
+            guard let self, self.session != nil, !self.textFieldFocused else { return event }
             switch event.keyCode {
-            case 126: session.send(.up);    return nil
-            case 125: session.send(.down);  return nil
-            case 123: session.send(.left);  return nil
-            case 124: session.send(.right); return nil
-            case 36, 76: session.send(.ok); return nil   // Return / keypad Enter
-            case 53: session.send(.back);   return nil   // Esc
-            case 49: session.send(.playPause); return nil // Space
-            case 51: session.send(.back);   return nil   // Delete ≈ back
+            case 126: self.fire(.up);    return nil
+            case 125: self.fire(.down);  return nil
+            case 123: self.fire(.left);  return nil
+            case 124: self.fire(.right); return nil
+            case 36, 76: self.fire(.ok); return nil   // Return / keypad Enter
+            case 53: self.fire(.back);   return nil   // Esc
+            case 49: self.fire(.playPause); return nil // Space
+            case 51: self.fire(.back);   return nil   // Delete ≈ back
             default: break
             }
             switch event.charactersIgnoringModifiers {
-            case "+", "=": session.send(.volumeUp);   return nil
-            case "-", "_": session.send(.volumeDown); return nil
-            case "m":      session.send(.mute);       return nil
-            case "h":      session.send(.home);       return nil
+            case "+", "=": self.fire(.volumeUp);   return nil
+            case "-", "_": self.fire(.volumeDown); return nil
+            case "m":      self.fire(.mute);       return nil
+            case "h":      self.fire(.home);       return nil
             default:       return event
-            }
-        }
-
-        // Media keys (play/pause, volume, mute) arrive as .systemDefined
-        // subtype 8 events. Capturing them here means they control the TV
-        // instead of the Mac while the remote is front-most — the requested
-        // "media-key passthrough".
-        mediaKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .systemDefined) { [weak self] event in
-            guard let self, let session = self.session, event.subtype.rawValue == 8 else { return event }
-            let keyCode = Int32((event.data1 & 0xFFFF_0000) >> 16)
-            let isKeyDown = ((event.data1 & 0x0000_FF00) >> 8) == 0x0A
-            guard isKeyDown else { return nil }   // swallow key-ups of handled keys
-            switch keyCode {
-            case NX_KEYTYPE_PLAY:       session.send(.playPause);    return nil
-            case NX_KEYTYPE_SOUND_UP:   session.send(.volumeUp);     return nil
-            case NX_KEYTYPE_SOUND_DOWN: session.send(.volumeDown);   return nil
-            case NX_KEYTYPE_MUTE:       session.send(.mute);         return nil
-            case NX_KEYTYPE_FAST:       session.send(.skipForward);  return nil
-            case NX_KEYTYPE_REWIND:     session.send(.skipBackward); return nil
-            default: return event
             }
         }
     }
 
     func removeKeyMonitors() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        if let mediaKeyMonitor { NSEvent.removeMonitor(mediaKeyMonitor) }
         keyMonitor = nil
-        mediaKeyMonitor = nil
     }
 }
 
@@ -209,8 +200,11 @@ struct RemoteView: View {
     // MARK: header — power · device picker · refresh · settings
 
     private var header: some View {
-        HStack(spacing: 10) {
-            RemoteButton(symbol: "power", tint: .red, size: 30) {
+        // Fixed-size controls at both ends; the picker takes the flexible
+        // middle and truncates, so the power button and gear are always
+        // visible no matter how long the TV's name is.
+        HStack(spacing: 8) {
+            RemoteButton(symbol: "power", tint: .red, size: 30, key: .power) {
                 state.session?.send(.power)
             }
             .disabled(state.session == nil)
@@ -249,16 +243,19 @@ struct RemoteView: View {
             Button("Add TV by IP…") { addingManually = true }
         } label: {
             // borderlessButton menus draw their own disclosure chevron.
-            // Bounded width + tail truncation so a long TV name can't push
-            // the power button and gear out of the fixed-width popover.
+            // No .fixedSize() here — it would force the label to its full
+            // text width and shove the power button and gear off the popover.
             Text(state.session.map(displayName) ?? "Choose a TV")
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 132, alignment: .leading)
+                // FIXED width (not maxWidth) directly on the label: proposes
+                // exactly this width to the Text so it always truncates,
+                // regardless of how the Menu propagates layout. Leaves room
+                // for the power button, refresh, and gear in the 272 pt row.
+                .frame(width: 132, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
     /// The name to show for a session's TV: the user's custom nickname if set,
@@ -444,20 +441,20 @@ struct RemoteView: View {
     private var controlRows: some View {
         VStack(spacing: 10) {
             HStack(spacing: 24) {
-                RemoteButton(symbol: "arrow.uturn.backward", size: 38) { send(.back) }
-                RemoteButton(symbol: "house", size: 38) { send(.home) }
-                RemoteButton(symbol: "line.3.horizontal", size: 38) { send(.menu) }
+                RemoteButton(symbol: "arrow.uturn.backward", size: 38, key: .back) { send(.back) }
+                RemoteButton(symbol: "house", size: 38, key: .home) { send(.home) }
+                RemoteButton(symbol: "line.3.horizontal", size: 38, key: .menu) { send(.menu) }
             }
             // ~10 s skips flank play/pause — how modern streaming UIs seek.
             HStack(spacing: 24) {
-                RemoteButton(symbol: "gobackward.10", size: 38) { send(.skipBackward) }
-                RemoteButton(symbol: "playpause.fill", size: 38) { send(.playPause) }
-                RemoteButton(symbol: "goforward.10", size: 38) { send(.skipForward) }
+                RemoteButton(symbol: "gobackward.10", size: 38, key: .skipBackward) { send(.skipBackward) }
+                RemoteButton(symbol: "playpause.fill", size: 38, key: .playPause) { send(.playPause) }
+                RemoteButton(symbol: "goforward.10", size: 38, key: .skipForward) { send(.skipForward) }
             }
             HStack(spacing: 24) {
-                RemoteButton(symbol: "minus", size: 38) { send(.volumeDown) }
-                RemoteButton(symbol: "speaker.slash", size: 38) { send(.mute) }
-                RemoteButton(symbol: "plus", size: 38) { send(.volumeUp) }
+                RemoteButton(symbol: "minus", size: 38, key: .volumeDown) { send(.volumeDown) }
+                RemoteButton(symbol: "speaker.slash", size: 38, key: .mute) { send(.mute) }
+                RemoteButton(symbol: "plus", size: 38, key: .volumeUp) { send(.volumeUp) }
             }
         }
     }
@@ -548,7 +545,12 @@ struct RemoteButton: View {
     let symbol: String
     var tint: Color = .primary
     let size: CGFloat
+    /// The remote key this button represents. When a keyboard shortcut fires
+    /// the same key, the button flashes as if clicked. nil = never flashes
+    /// from the keyboard (it has no shortcut).
+    var key: RemoteKey? = nil
     let action: () -> Void
+    @EnvironmentObject private var state: AppState
     @State private var pressed = false
 
     var body: some View {
@@ -567,6 +569,12 @@ struct RemoteButton: View {
                     action()
                 }
                 .onEnded { _ in pressed = false })
+            // Flash when the matching keyboard shortcut fires.
+            .onChange(of: state.keyPulse) { _, _ in
+                guard let key, state.lastKey == key else { return }
+                pressed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) { pressed = false }
+            }
     }
 }
 
@@ -575,6 +583,7 @@ struct RemoteButton: View {
 /// Pressing highlights the touched wedge and fires instantly.
 struct DPad: View {
     let send: (RemoteKey) -> Void
+    @EnvironmentObject private var state: AppState
 
     private enum Region { case up, down, left, right, ok }
     @State private var pressed: Region?
@@ -623,6 +632,23 @@ struct DPad: View {
                 }
             }
             .onEnded { _ in pressed = nil })
+        // Flash the matching wedge/hub when an arrow or Enter key fires.
+        .onChange(of: state.keyPulse) { _, _ in
+            let region: Region?
+            switch state.lastKey {
+            case .up: region = .up
+            case .down: region = .down
+            case .left: region = .left
+            case .right: region = .right
+            case .ok: region = .ok
+            default: region = nil   // non-d-pad key — ignore
+            }
+            guard let region else { return }
+            pressed = region
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                if pressed == region { pressed = nil }
+            }
+        }
     }
 
     /// Map a press location onto hub-or-wedge: distance decides OK vs ring,

@@ -11,8 +11,8 @@ no cloud.
 - **Full remote** — power, d-pad + OK, back/home/menu, play/pause, seek, volume
 - **Keyboard text input** — type into TV search boxes from your Mac keyboard
 - **App shortcuts** — one click to Netflix, YouTube, Prime Video & friends
-- **Media-key passthrough** — while the remote is open, your Mac's arrow keys,
-  Space, Esc, and media/volume keys drive the TV
+- **Keyboard control** — while the remote is open, your Mac's arrow keys drive
+  the d-pad, Enter = OK, Esc = back, Space = play/pause
 - **One-time pairing** — PIN on screen (Fire TV / Android TV) or an Allow
   dialog on the TV (Samsung / LG); Roku needs nothing. Tokens are remembered.
 - Native Swift/SwiftUI. No Electron. ~1 MB binary.
