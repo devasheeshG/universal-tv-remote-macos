@@ -421,39 +421,55 @@ struct RemoteView: View {
     @ViewBuilder
     private var appShortcuts: some View {
         if let session = state.session, !session.apps.isEmpty {
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    ForEach(session.apps.prefix(5)) { app in
-                        AppIconButton(app: app, size: 36, showName: false) {
-                            session.launchApp(app.id)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    if session.apps.count > 5 {
-                        Button {
-                            withAnimation(.easeOut(duration: 0.15)) { appsExpanded.toggle() }
-                        } label: {
-                            Image(systemName: appsExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 24, height: 24)
-                                .background(Circle().fill(.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
-                        .help(appsExpanded ? "Show fewer apps" : "Show all apps")
-                    }
-                }
-                if appsExpanded {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 12) {
-                        ForEach(session.apps) { app in
-                            AppIconButton(app: app, size: 36, showName: true) {
+            VStack(spacing: 8) {
+                if !appsExpanded {
+                    // Collapsed: just the top few, icon-only.
+                    HStack(spacing: 10) {
+                        ForEach(session.apps.prefix(5)) { app in
+                            AppIconButton(app: app, size: 36, showName: false) {
                                 session.launchApp(app.id)
                             }
                         }
+                        Spacer(minLength: 0)
+                        if session.apps.count > 5 { expandToggle }
                     }
+                } else {
+                    // Expanded: the full catalog REPLACES the top row (no
+                    // duplicate icons), scrolling inside a capped height so
+                    // the popover never outgrows the screen.
+                    HStack {
+                        Text("All apps").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        expandToggle
+                    }
+                    ScrollView {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 12) {
+                            ForEach(session.apps) { app in
+                                AppIconButton(app: app, size: 36, showName: true) {
+                                    session.launchApp(app.id)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .frame(maxHeight: 180)
                 }
             }
         }
+    }
+
+    private var expandToggle: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { appsExpanded.toggle() }
+        } label: {
+            Image(systemName: appsExpanded ? "chevron.up" : "chevron.down")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(.white.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .help(appsExpanded ? "Show fewer apps" : "Show all apps")
     }
 
     private func send(_ key: RemoteKey) { state.session?.send(key) }
@@ -591,22 +607,61 @@ struct DPad: View {
     }
 }
 
-/// One app shortcut: the service's favicon in a rounded tile (fetched over
-/// the network and cached by URLCache — bundling trademarked logos is the
-/// alternative nobody wants). Falls back to a letter avatar.
+/// Resolves crisp app icons: real App Store artwork via the iTunes Search
+/// API (uniform rounded-square 256 px images), falling back to the service's
+/// favicon, then a letter avatar. Resolved artwork URLs are cached in
+/// UserDefaults so the lookup happens once per app ever; the images
+/// themselves are cached by URLCache.
+enum AppIconResolver {
+    static func artworkURL(for appName: String) async -> URL? {
+        let cacheKey = "iconURL.\(appName)"
+        if let cached = UserDefaults.standard.string(forKey: cacheKey) {
+            return URL(string: cached)   // "" caches a known miss
+        }
+        let query = appName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? appName
+        let search = URL(string: "https://itunes.apple.com/search?term=\(query)&entity=software&country=us&limit=1")!
+        var found = ""
+        if let (data, _) = try? await URLSession.shared.data(from: search),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let results = json["results"] as? [[String: Any]],
+           let artwork = results.first?["artworkUrl100"] as? String,
+           let track = results.first?["trackName"] as? String,
+           // Only trust the hit when the names overlap ("Max" → "HBO Max…"
+           // is fine; "Silk Browser" → "Private Browsing Web Browser" is a
+           // miss that should fall back to the favicon instead).
+           track.lowercased().contains(appName.lowercased())
+            || appName.lowercased().contains(track.lowercased()) {
+            // The artwork URL pattern allows requesting other sizes directly.
+            found = artwork.replacingOccurrences(of: "100x100", with: "256x256")
+        }
+        UserDefaults.standard.set(found, forKey: cacheKey)
+        return URL(string: found)
+    }
+}
+
+/// One app shortcut tile. Icon precedence: App Store artwork → favicon →
+/// letter avatar. (Fetched, not bundled — shipping trademarked logos in the
+/// repo is the alternative nobody wants.)
 struct AppIconButton: View {
     let app: TVApp
     let size: CGFloat
     let showName: Bool
     let action: () -> Void
+    @State private var artworkURL: URL?
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Group {
-                    if let url = app.iconURL {
+                    if let url = artworkURL ?? app.iconURL {
                         AsyncImage(url: url) { image in
-                            image.resizable().scaledToFit().padding(size * 0.16)
+                            // Store artwork is full-bleed; favicons keep a
+                            // little breathing room.
+                            if artworkURL != nil {
+                                image.resizable().scaledToFill()
+                            } else {
+                                image.resizable().scaledToFit().padding(size * 0.14)
+                            }
                         } placeholder: {
                             letterAvatar
                         }
@@ -616,6 +671,7 @@ struct AppIconButton: View {
                 }
                 .frame(width: size, height: size)
                 .background(RoundedRectangle(cornerRadius: size * 0.24).fill(.white.opacity(0.08)))
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.24))
                 if showName {
                     Text(app.name)
                         .font(.caption2)
@@ -626,6 +682,7 @@ struct AppIconButton: View {
         }
         .buttonStyle(PressableStyle())
         .help(app.name)
+        .task(id: app.id) { artworkURL = await AppIconResolver.artworkURL(for: app.name) }
     }
 
     private var letterAvatar: some View {
