@@ -144,12 +144,24 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
             post(path: "v1/media", query: "action=scan",
                  body: ["direction": "forward", "keyAction": ["keyActionType": "keyDownUp"]])
 
-        // Power: "power" toggles when the TV is awake; when it's fully asleep
-        // the 8080 service is gone, so also fire the DIAL wake — whichever
-        // one the TV can hear wins.
+        // Power is a real on/off toggle. A Fire TV Stick is never truly off;
+        // "off" is sleep (screen dark + CEC tells the TV to power off), "on"
+        // is a DIAL wake (restarts the sleeping 8080 service + CEC powers the
+        // TV back on). We can't ask a sleeping Stick its state — the API is
+        // down — so reachability IS the state: a quick probe, then sleep if
+        // it answers, wake if it doesn't.
         case .power:
-            wakeUp()
-            navigation("power")
+            var probe = URLRequest(url: base)
+            probe.allHTTPHeaderFields = headers(includeToken: false)
+            probe.timeoutInterval = 2
+            session.dataTask(with: probe) { [weak self] _, response, _ in
+                guard let self else { return }
+                if response != nil {
+                    self.navigation("sleep")   // awake → turn off
+                } else {
+                    self.wakeUp()              // asleep → turn on
+                }
+            }.resume()
 
         default:
             let action: String
