@@ -47,8 +47,13 @@ final class AppState: ObservableObject {
     /// SwiftUI doesn't observe nested ObservableObjects, so the active
     /// session's changes (state, live app list) are forwarded to ours.
     private var sessionForwarder: AnyCancellable?
+    private var discoveryForwarder: AnyCancellable?
 
     init() {
+        // Forward the discovery engine's changes (new devices, renames) so
+        // views observing AppState re-render.
+        discoveryForwarder = discovery.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
         discovery.start()
         // Reconnect the last-used TV so the remote is live immediately.
         if let lastID = UserDefaults.standard.string(forKey: "selectedDevice"),
@@ -160,12 +165,17 @@ struct RemoteView: View {
     @State private var manualIP = ""
     /// Whether the app row shows the full catalog or just the top few.
     @State private var appsExpanded = false
+    // Inline "Rename this TV" form state.
+    @State private var renaming = false
+    @State private var renameInput = ""
 
     var body: some View {
         VStack(spacing: 14) {
             header
             if addingManually {
                 addTVForm
+            } else if renaming {
+                renameForm
             } else {
                 statusSection
             }
@@ -231,7 +241,7 @@ struct RemoteView: View {
                 Button {
                     state.select(device)
                 } label: {
-                    Label("\(device.name)  ·  \(device.brand.displayName)",
+                    Label("\(state.discovery.displayName(for: device))  ·  \(device.brand.displayName)",
                           systemImage: device.brand.symbolName)
                 }
             }
@@ -239,19 +249,33 @@ struct RemoteView: View {
             Button("Add TV by IP…") { addingManually = true }
         } label: {
             // borderlessButton menus draw their own disclosure chevron.
-            Text(state.session?.device.name ?? "Choose a TV")
+            // Bounded width + tail truncation so a long TV name can't push
+            // the power button and gear out of the fixed-width popover.
+            Text(state.session.map(displayName) ?? "Choose a TV")
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 132, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
     }
 
+    /// The name to show for a session's TV: the user's custom nickname if set,
+    /// otherwise the discovered name.
+    private func displayName(_ session: RemoteSession) -> String {
+        state.discovery.displayName(for: session.device)
+    }
+
     private var settingsMenu: some View {
         Menu {
             if let session = state.session {
-                Button("Re-pair \"\(session.device.name)\"") { session.forgetAndRepair() }
-                Button("Forget \"\(session.device.name)\"") {
+                Button("Rename…") {
+                    renameInput = displayName(session)
+                    renaming = true
+                }
+                Button("Re-pair") { session.forgetAndRepair() }
+                Button("Forget this TV") {
                     session.disconnect()
                     state.discovery.forget(session.device)
                     state.session = nil
@@ -350,6 +374,34 @@ struct RemoteView: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.05)))
+    }
+
+    // MARK: rename
+
+    private var renameForm: some View {
+        VStack(spacing: 8) {
+            Text("Rename this TV").font(.caption).foregroundStyle(.secondary)
+            TextField("Friendly name", text: $renameInput)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(commitRename)
+            HStack {
+                Button("Cancel") { renaming = false }
+                    .controlSize(.small)
+                Button("Save", action: commitRename)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.05)))
+    }
+
+    private func commitRename() {
+        if let device = state.session?.device {
+            // Blank clears the nickname and reverts to the discovered name.
+            state.discovery.rename(device, to: renameInput)
+        }
+        renaming = false
     }
 
     private func addManualTV() {

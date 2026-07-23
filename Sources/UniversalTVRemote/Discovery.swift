@@ -32,6 +32,10 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     private var browsers: [NWBrowser] = []
     private let ssdpQueue = DispatchQueue(label: "ssdp.scan", qos: .utility)
     private static let rememberedKey = "rememberedDevices"
+    private static let customNamesKey = "customNames"
+    /// User-chosen nicknames keyed by device id. These always win over the
+    /// name the TV broadcasts, and survive re-discovery.
+    private var customNames: [String: String] = [:]
 
     // MARK: lifecycle
 
@@ -39,6 +43,8 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// browsers running for the whole app lifetime (they are cheap and make
     /// Fire/Android TVs appear the moment they join the network).
     func start() {
+        customNames = (UserDefaults.standard.dictionary(forKey: DiscoveryEngine.customNamesKey)
+                       as? [String: String]) ?? [:]
         if let data = UserDefaults.standard.data(forKey: DiscoveryEngine.rememberedKey),
            let remembered = try? JSONDecoder().decode([DiscoveredTV].self, from: data) {
             devices = remembered
@@ -61,7 +67,24 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// Drop a TV from the remembered list (Settings → Forget).
     func forget(_ device: DiscoveredTV) {
         devices.removeAll { $0.id == device.id }
+        customNames[device.id] = nil
+        UserDefaults.standard.set(customNames, forKey: DiscoveryEngine.customNamesKey)
         persist()
+    }
+
+    /// The name to display for a TV: the user's nickname if they set one,
+    /// otherwise whatever the TV broadcast.
+    func displayName(for device: DiscoveredTV) -> String {
+        customNames[device.id] ?? device.name
+    }
+
+    /// Give a TV a custom nickname (Settings → Rename). An empty/blank name
+    /// clears the nickname and reverts to the discovered name.
+    func rename(_ device: DiscoveredTV, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        customNames[device.id] = trimmed.isEmpty ? nil : trimmed
+        UserDefaults.standard.set(customNames, forKey: DiscoveryEngine.customNamesKey)
+        objectWillChange.send()   // devices array unchanged; nudge observers
     }
 
     /// Manually add a TV that discovery didn't find (different subnet, mDNS
