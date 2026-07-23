@@ -181,6 +181,7 @@ struct RemoteView: View {
         .padding(16)
         .frame(width: 272)
         .background(.ultraThinMaterial)
+        .background(WindowTopPin())
         .preferredColorScheme(.dark)
         .onAppear {
             state.discovery.scan()
@@ -705,6 +706,56 @@ struct AppIconButton: View {
             .font(.system(size: size * 0.45, weight: .bold, design: .rounded))
             .foregroundStyle(.secondary)
     }
+}
+
+/// Keeps the popover's TOP edge fixed while its height changes.
+///
+/// macOS windows are anchored at their bottom-left corner, and the
+/// MenuBarExtra panel resizes whenever SwiftUI content height changes
+/// (connect status appearing, app icons loading, the grid expanding…).
+/// Bottom anchored + taller = the window grows UPWARD, sliding under the
+/// menu bar and off the screen. This invisible helper grabs the hosting
+/// NSWindow, remembers where its top edge belongs (clamped to the screen's
+/// usable area), and re-anchors it after every resize.
+struct WindowTopPin: NSViewRepresentable {
+    final class Coordinator {
+        var observer: NSObjectProtocol?
+        var topEdge: CGFloat?
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        // The window isn't attached until after view installation.
+        DispatchQueue.main.async {
+            guard let window = view.window, context.coordinator.observer == nil else { return }
+            let coordinator = context.coordinator
+
+            // Snap the top edge back to (at most) the screen's usable top and
+            // hold it there. Runs once at attach — the panel is reused across
+            // opens and may still carry a displaced frame from last time —
+            // and again after every content resize.
+            func anchor() {
+                let screenTop = (window.screen ?? NSScreen.main)?.visibleFrame.maxY ?? .infinity
+                let top = min(coordinator.topEdge ?? window.frame.maxY, screenTop)
+                coordinator.topEdge = top
+                var frame = window.frame
+                guard abs(frame.maxY - top) > 0.5 else { return }
+                frame.origin.y = top - frame.height
+                window.setFrame(frame, display: true)
+            }
+
+            anchor()
+            coordinator.observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification, object: window, queue: .main
+            ) { _ in anchor() }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// Scales the button down slightly while pressed — cheap tactile feedback.
