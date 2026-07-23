@@ -452,7 +452,10 @@ struct RemoteView: View {
                         }
                         .padding(.vertical, 2)
                     }
-                    .frame(maxHeight: 180)
+                    // A fixed height, not maxHeight: ScrollView has no
+                    // intrinsic content height, so inside this size-hugging
+                    // popover a maxHeight-only frame collapses to zero.
+                    .frame(height: 180)
                 }
             }
         }
