@@ -83,9 +83,10 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
             request(uri: nextTransportIsPause ? "ssap://media.controls/pause"
                                               : "ssap://media.controls/play", payload: nil)
             nextTransportIsPause.toggle()
-        case .rewind:
+        // webOS has no skip URI; seek keys are the closest match.
+        case .rewind, .skipBackward:
             request(uri: "ssap://media.controls/rewind", payload: nil)
-        case .fastForward:
+        case .fastForward, .skipForward:
             request(uri: "ssap://media.controls/fastForward", payload: nil)
         case .volumeUp:
             request(uri: "ssap://audio/volumeUp", payload: nil)
@@ -126,11 +127,11 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
     /// webOS app ids (stable across firmware versions per aiowebostv docs).
     var apps: [TVApp] {
         [
-            TVApp(name: "Netflix", id: "netflix"),
-            TVApp(name: "YouTube", id: "youtube.leanback.v4"),
-            TVApp(name: "Prime Video", id: "amazon"),
-            TVApp(name: "Disney+", id: "disneyplus"),
-            TVApp(name: "Spotify", id: "spotify-beehive"),
+            TVApp(name: "Netflix", id: "netflix", domain: "netflix.com"),
+            TVApp(name: "YouTube", id: "youtube.leanback.v4", domain: "youtube.com"),
+            TVApp(name: "Prime Video", id: "amazon", domain: "primevideo.com"),
+            TVApp(name: "Disney+", id: "disneyplus", domain: "disneyplus.com"),
+            TVApp(name: "Spotify", id: "spotify-beehive", domain: "spotify.com"),
         ]
     }
 

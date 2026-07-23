@@ -31,10 +31,10 @@ final class RokuDriver: TVDriver {
     /// Filled from /query/apps on connect so the shortcut row shows what is
     /// actually installed; starts with well-known channel ids as a fallback.
     private var liveApps: [TVApp] = [
-        TVApp(name: "Netflix", id: "12"),
-        TVApp(name: "YouTube", id: "837"),
-        TVApp(name: "Prime Video", id: "13"),
-        TVApp(name: "Disney+", id: "291097"),
+        TVApp(name: "Netflix", id: "12", domain: "netflix.com"),
+        TVApp(name: "YouTube", id: "837", domain: "youtube.com"),
+        TVApp(name: "Prime Video", id: "13", domain: "primevideo.com"),
+        TVApp(name: "Disney+", id: "291097", domain: "disneyplus.com"),
     ]
 
     init(device: DiscoveredTV) {
@@ -92,8 +92,9 @@ final class RokuDriver: TVDriver {
         case .home:        name = "Home"
         case .menu:        name = "Info"       // the Roku "*" options key
         case .playPause:   name = "Play"       // Roku's Play key is a toggle
-        case .rewind:      name = "Rev"
-        case .fastForward: name = "Fwd"
+        // ECP has no skip key; Rev/Fwd single-press is the closest match.
+        case .rewind, .skipBackward:     name = "Rev"
+        case .fastForward, .skipForward: name = "Fwd"
         case .volumeUp:    name = "VolumeUp"   // volume keys work on Roku TVs
         case .volumeDown:  name = "VolumeDown" // (ignored by sticks/boxes)
         case .mute:        name = "VolumeMute"

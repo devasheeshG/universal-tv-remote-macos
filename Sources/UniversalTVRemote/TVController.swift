@@ -75,14 +75,37 @@ enum RemoteKey {
     case up, down, left, right, ok
     case back, home, menu
     case playPause, rewind, fastForward
+    /// ~10 s jumps. Brands without a dedicated skip key map these onto their
+    /// scan/seek keys, which modern streaming apps treat as a short skip.
+    case skipForward, skipBackward
     case volumeUp, volumeDown, mute
 }
 
 /// A launchable app shown in the app-shortcut row. `id` is whatever the brand
 /// protocol wants (package name, Tizen app id, Roku channel id, deep link…).
+/// `domain` powers the icon: we fetch the service's favicon rather than
+/// bundling trademarked logos.
 struct TVApp: Identifiable, Hashable {
     let name: String
     let id: String
+    var domain: String? = nil
+
+    /// Favicon lookup for names that arrive without a domain (Roku's live
+    /// channel list) — best-effort, unknown apps fall back to a letter avatar.
+    static let knownDomains: [String: String] = [
+        "Netflix": "netflix.com", "YouTube": "youtube.com",
+        "Prime Video": "primevideo.com", "Disney+": "disneyplus.com",
+        "Spotify": "spotify.com", "Hulu": "hulu.com", "Max": "max.com",
+        "HBO Max": "max.com", "Apple TV+": "tv.apple.com", "Plex": "plex.tv",
+        "Twitch": "twitch.tv", "Crunchyroll": "crunchyroll.com",
+    ]
+
+    /// URL of a 64 px icon for this app, or nil when we have no domain.
+    var iconURL: URL? {
+        let resolved = domain ?? TVApp.knownDomains[name]
+        guard let resolved else { return nil }
+        return URL(string: "https://www.google.com/s2/favicons?domain=\(resolved)&sz=64")
+    }
 }
 
 // MARK: - Session state

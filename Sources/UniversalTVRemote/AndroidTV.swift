@@ -103,9 +103,12 @@ final class AndroidTVDriver: TVDriver {
         case .back:        code = .KEYCODE_BACK
         case .home:        code = .KEYCODE_HOME
         case .menu:        code = .KEYCODE_MENU
-        case .playPause:   code = .KEYCODE_MEDIA_PLAY_PAUSE
-        case .rewind:      code = .KEYCODE_MEDIA_REWIND
-        case .fastForward: code = .KEYCODE_MEDIA_FAST_FORWARD
+        case .playPause:    code = .KEYCODE_MEDIA_PLAY_PAUSE
+        case .rewind:       code = .KEYCODE_MEDIA_REWIND
+        case .fastForward:  code = .KEYCODE_MEDIA_FAST_FORWARD
+        // Android has real skip keycodes (~10 s in most players).
+        case .skipForward:  code = .KEYCODE_MEDIA_SKIP_FORWARD
+        case .skipBackward: code = .KEYCODE_MEDIA_SKIP_BACKWARD
         case .volumeUp:    code = .KEYCODE_VOLUME_UP
         case .volumeDown:  code = .KEYCODE_VOLUME_DOWN
         case .mute:        code = .KEYCODE_VOLUME_MUTE
@@ -144,10 +147,12 @@ final class AndroidTVDriver: TVDriver {
 
     var apps: [TVApp] {
         [
-            TVApp(name: "Netflix", id: "https://www.netflix.com/browse"),
-            TVApp(name: "YouTube", id: "https://www.youtube.com"),
-            TVApp(name: "Prime Video", id: "https://app.primevideo.com"),
-            TVApp(name: "Disney+", id: "https://www.disneyplus.com"),
+            TVApp(name: "Netflix", id: "https://www.netflix.com/browse", domain: "netflix.com"),
+            TVApp(name: "YouTube", id: "https://www.youtube.com", domain: "youtube.com"),
+            TVApp(name: "Prime Video", id: "https://app.primevideo.com", domain: "primevideo.com"),
+            TVApp(name: "Disney+", id: "https://www.disneyplus.com", domain: "disneyplus.com"),
+            TVApp(name: "Spotify", id: "https://open.spotify.com", domain: "spotify.com"),
+            TVApp(name: "Max", id: "https://play.max.com", domain: "max.com"),
         ]
     }
 

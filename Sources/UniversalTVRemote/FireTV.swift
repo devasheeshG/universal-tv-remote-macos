@@ -126,10 +126,13 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         // Media transport lives on its own endpoint with its own actions.
         case .playPause:
             post(path: "v1/media", query: "action=play", body: nil)
-        case .rewind:
+        // A single scan press behaves as the ~10 s skip inside Fire TV players
+        // (same as one tap of ⏪/⏩ on the physical remote), so skip and
+        // rewind/fast-forward share the endpoint.
+        case .rewind, .skipBackward:
             post(path: "v1/media", query: "action=scan",
                  body: ["direction": "back", "keyAction": ["keyActionType": "keyDownUp"]])
-        case .fastForward:
+        case .fastForward, .skipForward:
             post(path: "v1/media", query: "action=scan",
                  body: ["direction": "forward", "keyAction": ["keyActionType": "keyDownUp"]])
 
@@ -169,13 +172,23 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
     }
 
     /// Fire OS package names, taken from the uc-intg-firetv app database.
+    /// Ordered by popularity: the UI shows the first few collapsed and the
+    /// whole list expanded. Launching an app that isn't installed is a no-op
+    /// on the TV, so an over-complete catalog is harmless.
     var apps: [TVApp] {
         [
-            TVApp(name: "Netflix", id: "com.netflix.ninja"),
-            TVApp(name: "Prime Video", id: "com.amazon.avod"),
-            TVApp(name: "YouTube", id: "com.amazon.firetv.youtube"),
-            TVApp(name: "Disney+", id: "com.disney.disneyplus"),
-            TVApp(name: "Spotify", id: "com.spotify.tv.android"),
+            TVApp(name: "Netflix", id: "com.netflix.ninja", domain: "netflix.com"),
+            TVApp(name: "Prime Video", id: "com.amazon.avod", domain: "primevideo.com"),
+            TVApp(name: "YouTube", id: "com.amazon.firetv.youtube", domain: "youtube.com"),
+            TVApp(name: "Disney+", id: "com.disney.disneyplus", domain: "disneyplus.com"),
+            TVApp(name: "Spotify", id: "com.spotify.tv.android", domain: "spotify.com"),
+            TVApp(name: "Hulu", id: "com.hulu.plus", domain: "hulu.com"),
+            TVApp(name: "Max", id: "com.wbd.stream", domain: "max.com"),
+            TVApp(name: "Apple TV+", id: "com.apple.atve.amazon.appletv", domain: "tv.apple.com"),
+            TVApp(name: "Plex", id: "com.plexapp.android", domain: "plex.tv"),
+            TVApp(name: "VLC", id: "org.videolan.vlc", domain: "videolan.org"),
+            TVApp(name: "Kodi", id: "org.xbmc.kodi", domain: "kodi.tv"),
+            TVApp(name: "Silk Browser", id: "com.amazon.cloud9.silkbrowser", domain: "amazon.com"),
         ]
     }
 

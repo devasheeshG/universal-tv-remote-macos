@@ -105,12 +105,12 @@ final class AppState: ObservableObject {
             let isKeyDown = ((event.data1 & 0x0000_FF00) >> 8) == 0x0A
             guard isKeyDown else { return nil }   // swallow key-ups of handled keys
             switch keyCode {
-            case NX_KEYTYPE_PLAY:       session.send(.playPause);   return nil
-            case NX_KEYTYPE_SOUND_UP:   session.send(.volumeUp);    return nil
-            case NX_KEYTYPE_SOUND_DOWN: session.send(.volumeDown);  return nil
-            case NX_KEYTYPE_MUTE:       session.send(.mute);        return nil
-            case NX_KEYTYPE_FAST:       session.send(.fastForward); return nil
-            case NX_KEYTYPE_REWIND:     session.send(.rewind);      return nil
+            case NX_KEYTYPE_PLAY:       session.send(.playPause);    return nil
+            case NX_KEYTYPE_SOUND_UP:   session.send(.volumeUp);     return nil
+            case NX_KEYTYPE_SOUND_DOWN: session.send(.volumeDown);   return nil
+            case NX_KEYTYPE_MUTE:       session.send(.mute);         return nil
+            case NX_KEYTYPE_FAST:       session.send(.skipForward);  return nil
+            case NX_KEYTYPE_REWIND:     session.send(.skipBackward); return nil
             default: return event
             }
         }
@@ -152,6 +152,8 @@ struct RemoteView: View {
     @State private var addingManually = false
     @State private var manualBrand: TVBrand = .fireTV
     @State private var manualIP = ""
+    /// Whether the app row shows the full catalog or just the top few.
+    @State private var appsExpanded = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -229,14 +231,10 @@ struct RemoteView: View {
             Divider()
             Button("Add TV by IP…") { addingManually = true }
         } label: {
-            HStack(spacing: 4) {
-                Text(state.session?.device.name ?? "Choose a TV")
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
+            // borderlessButton menus draw their own disclosure chevron.
+            Text(state.session?.device.name ?? "Choose a TV")
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -379,24 +377,7 @@ struct RemoteView: View {
     // MARK: d-pad
 
     private var dpad: some View {
-        VStack(spacing: 8) {
-            RemoteButton(symbol: "chevron.up", size: 44) { send(.up) }
-            HStack(spacing: 8) {
-                RemoteButton(symbol: "chevron.left", size: 44) { send(.left) }
-                // The OK button is the visual anchor of the remote — bigger
-                // and accent-tinted.
-                Button { send(.ok) } label: {
-                    Text("OK")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .frame(width: 60, height: 60)
-                        .background(Circle().fill(.tint.opacity(0.25)))
-                        .overlay(Circle().strokeBorder(.tint.opacity(0.4), lineWidth: 1))
-                }
-                .buttonStyle(PressableStyle())
-                RemoteButton(symbol: "chevron.right", size: 44) { send(.right) }
-            }
-            RemoteButton(symbol: "chevron.down", size: 44) { send(.down) }
-        }
+        DPad(send: send)
     }
 
     // MARK: back/home/menu · transport · volume
@@ -408,10 +389,11 @@ struct RemoteView: View {
                 RemoteButton(symbol: "house", size: 38) { send(.home) }
                 RemoteButton(symbol: "line.3.horizontal", size: 38) { send(.menu) }
             }
+            // ~10 s skips flank play/pause — how modern streaming UIs seek.
             HStack(spacing: 24) {
-                RemoteButton(symbol: "backward.fill", size: 38) { send(.rewind) }
+                RemoteButton(symbol: "gobackward.10", size: 38) { send(.skipBackward) }
                 RemoteButton(symbol: "playpause.fill", size: 38) { send(.playPause) }
-                RemoteButton(symbol: "forward.fill", size: 38) { send(.fastForward) }
+                RemoteButton(symbol: "goforward.10", size: 38) { send(.skipForward) }
             }
             HStack(spacing: 24) {
                 RemoteButton(symbol: "minus", size: 38) { send(.volumeDown) }
@@ -434,20 +416,40 @@ struct RemoteView: View {
             }
     }
 
-    // MARK: app shortcuts
+    // MARK: app shortcuts — top row of icons, expandable to the full catalog
 
     @ViewBuilder
     private var appShortcuts: some View {
         if let session = state.session, !session.apps.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(session.apps) { app in
-                        Button(app.name) { session.launchApp(app.id) }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(.white.opacity(0.08)))
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    ForEach(session.apps.prefix(5)) { app in
+                        AppIconButton(app: app, size: 36, showName: false) {
+                            session.launchApp(app.id)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    if session.apps.count > 5 {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.15)) { appsExpanded.toggle() }
+                        } label: {
+                            Image(systemName: appsExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 24, height: 24)
+                                .background(Circle().fill(.white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                        .help(appsExpanded ? "Show fewer apps" : "Show all apps")
+                    }
+                }
+                if appsExpanded {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 12) {
+                        ForEach(session.apps) { app in
+                            AppIconButton(app: app, size: 36, showName: true) {
+                                session.launchApp(app.id)
+                            }
+                        }
                     }
                 }
             }
@@ -459,27 +461,183 @@ struct RemoteView: View {
 
 // MARK: - Reusable button pieces
 
-/// A circular remote button: SF Symbol in a subtle filled circle with a
-/// press-down animation. Used for everything except the OK anchor.
+/// A circular remote button: SF Symbol in a subtle filled circle.
+///
+/// Fires on mouse-DOWN, not mouse-up: real remotes act the instant you press,
+/// and the ~100 ms saved per press is most of what makes the remote feel
+/// responsive. (SwiftUI Buttons fire on release, which reads as lag here.)
 struct RemoteButton: View {
     let symbol: String
     var tint: Color = .primary
     let size: CGFloat
     let action: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.38, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
+            .background(Circle().fill(.white.opacity(pressed ? 0.2 : 0.08)))
+            .scaleEffect(pressed ? 0.9 : 1)
+            .animation(.easeOut(duration: 0.1), value: pressed)
+            // minimumDistance 0 → onChanged fires immediately on mouse-down.
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !pressed else { return }
+                    pressed = true
+                    action()
+                }
+                .onEnded { _ in pressed = false })
+    }
+}
+
+/// The circular d-pad: one ring with four directional segments around an OK
+/// hub, driven by a single mouse-down gesture (press position → region).
+/// Pressing highlights the touched wedge and fires instantly.
+struct DPad: View {
+    let send: (RemoteKey) -> Void
+
+    private enum Region { case up, down, left, right, ok }
+    @State private var pressed: Region?
+
+    private let diameter: CGFloat = 196
+    private let hubRadius: CGFloat = 36
+
+    var body: some View {
+        ZStack {
+            Circle().fill(.white.opacity(0.07))
+
+            // Pressed-wedge highlight (drawn under the chevrons).
+            if let pressed, pressed != .ok {
+                wedge(for: pressed)
+                    .fill(.white.opacity(0.14))
+            }
+
+            // Direction glyphs at the four compass points.
+            chevron("chevron.up",    x: 0, y: -0.36)
+            chevron("chevron.down",  x: 0, y: 0.36)
+            chevron("chevron.left",  x: -0.36, y: 0)
+            chevron("chevron.right", x: 0.36, y: 0)
+
+            // OK hub — the visual anchor of the remote.
+            Text("OK")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .frame(width: hubRadius * 2, height: hubRadius * 2)
+                .background(Circle().fill(.tint.opacity(pressed == .ok ? 0.45 : 0.25)))
+                .overlay(Circle().strokeBorder(.tint.opacity(0.4), lineWidth: 1))
+                .scaleEffect(pressed == .ok ? 0.94 : 1)
+        }
+        .frame(width: diameter, height: diameter)
+        .animation(.easeOut(duration: 0.1), value: pressed)
+        .contentShape(Circle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { gesture in
+                guard pressed == nil else { return }   // one key per press
+                let region = region(at: gesture.startLocation)
+                pressed = region
+                switch region {
+                case .up: send(.up)
+                case .down: send(.down)
+                case .left: send(.left)
+                case .right: send(.right)
+                case .ok: send(.ok)
+                }
+            }
+            .onEnded { _ in pressed = nil })
+    }
+
+    /// Map a press location onto hub-or-wedge: distance decides OK vs ring,
+    /// angle decides which direction (45°-centered quadrants).
+    private func region(at point: CGPoint) -> Region {
+        let dx = point.x - diameter / 2
+        let dy = point.y - diameter / 2
+        if (dx * dx + dy * dy).squareRoot() <= hubRadius { return .ok }
+        // atan2 with screen coordinates (y grows downward): 0° = right.
+        let degrees = atan2(dy, dx) * 180 / .pi
+        switch degrees {
+        case -45..<45:    return .right
+        case 45..<135:    return .down
+        case -135 ..< -45: return .up
+        default:          return .left
+        }
+    }
+
+    private func chevron(_ symbol: String, x: CGFloat, y: CGFloat) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.primary)
+            .offset(x: x * diameter, y: y * diameter)
+    }
+
+    /// Annulus wedge used as the pressed-state highlight for a direction.
+    private func wedge(for region: Region) -> Path {
+        let center = CGPoint(x: diameter / 2, y: diameter / 2)
+        let start: Double
+        switch region {
+        case .right: start = -45
+        case .down:  start = 45
+        case .left:  start = 135
+        case .up:    start = 225
+        case .ok:    start = 0   // never drawn
+        }
+        var path = Path()
+        path.addArc(center: center, radius: diameter / 2,
+                    startAngle: .degrees(start), endAngle: .degrees(start + 90), clockwise: false)
+        path.addArc(center: center, radius: hubRadius + 6,
+                    startAngle: .degrees(start + 90), endAngle: .degrees(start), clockwise: true)
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// One app shortcut: the service's favicon in a rounded tile (fetched over
+/// the network and cached by URLCache — bundling trademarked logos is the
+/// alternative nobody wants). Falls back to a letter avatar.
+struct AppIconButton: View {
+    let app: TVApp
+    let size: CGFloat
+    let showName: Bool
+    let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.38, weight: .semibold))
-                .foregroundStyle(tint)
+            VStack(spacing: 4) {
+                Group {
+                    if let url = app.iconURL {
+                        AsyncImage(url: url) { image in
+                            image.resizable().scaledToFit().padding(size * 0.16)
+                        } placeholder: {
+                            letterAvatar
+                        }
+                    } else {
+                        letterAvatar
+                    }
+                }
                 .frame(width: size, height: size)
-                .background(Circle().fill(.white.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: size * 0.24).fill(.white.opacity(0.08)))
+                if showName {
+                    Text(app.name)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .buttonStyle(PressableStyle())
+        .help(app.name)
+    }
+
+    private var letterAvatar: some View {
+        Text(String(app.name.prefix(1)))
+            .font(.system(size: size * 0.45, weight: .bold, design: .rounded))
+            .foregroundStyle(.secondary)
     }
 }
 
 /// Scales the button down slightly while pressed — cheap tactile feedback.
+/// (Used for app tiles and other non-latency-critical buttons; the remote
+/// keys use the fire-on-mouse-down RemoteButton instead.)
 struct PressableStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

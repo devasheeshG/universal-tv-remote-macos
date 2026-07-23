@@ -109,8 +109,9 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
         // Tizen has no play/pause toggle key; KEY_PLAY_BACK behaves as the
         // toggle on recent models (falling back to plain play elsewhere).
         case .playPause:   code = "KEY_PLAY_BACK"
-        case .rewind:      code = "KEY_REWIND"
-        case .fastForward: code = "KEY_FF"
+        // Tizen has no dedicated skip keys; seek keys are the closest match.
+        case .rewind, .skipBackward:     code = "KEY_REWIND"
+        case .fastForward, .skipForward: code = "KEY_FF"
         case .volumeUp:    code = "KEY_VOLUP"
         case .volumeDown:  code = "KEY_VOLDOWN"
         case .mute:        code = "KEY_MUTE"
@@ -156,11 +157,11 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
     /// are stable store ids, but Samsung has been known to change them.
     var apps: [TVApp] {
         [
-            TVApp(name: "Netflix", id: "11101200001"),
-            TVApp(name: "YouTube", id: "111299001912"),
-            TVApp(name: "Prime Video", id: "3201512006785"),
-            TVApp(name: "Disney+", id: "3201901017640"),
-            TVApp(name: "Spotify", id: "3201606009684"),
+            TVApp(name: "Netflix", id: "11101200001", domain: "netflix.com"),
+            TVApp(name: "YouTube", id: "111299001912", domain: "youtube.com"),
+            TVApp(name: "Prime Video", id: "3201512006785", domain: "primevideo.com"),
+            TVApp(name: "Disney+", id: "3201901017640", domain: "disneyplus.com"),
+            TVApp(name: "Spotify", id: "3201606009684", domain: "spotify.com"),
         ]
     }
 
