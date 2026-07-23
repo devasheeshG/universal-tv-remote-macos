@@ -52,12 +52,7 @@ final class AndroidTVDriver: TVDriver {
 
         // TLSManager wants a closure producing the SecPKCS12Import result for
         // our client identity; generate the identity on first use.
-        tlsManager = TLSManager { () -> AndroidTVRemoteControl.Result<CFArray?> in
-            AndroidTVDriver.ensureClientIdentityExists()
-            return CertManager().cert(
-                AndroidTVDriver.certDirectory.appendingPathComponent("identity.p12"),
-                AndroidTVDriver.p12Password)
-        }
+        tlsManager = TLSManager { AndroidTVDriver.importClientIdentity() }
         // Capture the TV-side certificate during the handshake and feed both
         // public keys to the crypto manager (used to verify the pairing code).
         tlsManager.secTrustClosure = { [weak self] trust in
@@ -207,6 +202,52 @@ final class AndroidTVDriver: TVDriver {
             }
         }
         manager.connect(device.host)
+    }
+
+    // MARK: client identity import (keychain-prompt-free)
+
+    /// Cached for the process lifetime so repeated connects don't re-import.
+    private static var cachedIdentity: CFArray?
+
+    /// Imports identity.p12 for TLS — into a throwaway keychain in the temp
+    /// directory, NEVER the login keychain.
+    ///
+    /// Why: on macOS SecPKCS12Import must land in *some* keychain, and the
+    /// default is login. A private key in the login keychain is ACL-guarded
+    /// per signing identity, and this app is ad-hoc signed — every rebuild
+    /// looks like a different app, so macOS re-prompts "wants to access key"
+    /// forever. A fresh temp keychain is created by the current binary, whose
+    /// ACL therefore always matches: zero prompts, nothing persisted in the
+    /// user's keychains. (SecKeychainCreate is deprecated but has no
+    /// replacement for this use; the data-protection keychain needs
+    /// provisioning entitlements an ad-hoc app can't carry.)
+    private static func importClientIdentity() -> AndroidTVRemoteControl.Result<CFArray?> {
+        if let cachedIdentity { return .Result(cachedIdentity) }
+        ensureClientIdentityExists()
+        guard let p12Data = try? Data(contentsOf: certDirectory.appendingPathComponent("identity.p12")) else {
+            return .Error(.secPKCS12ImportNotSuccess)
+        }
+
+        let path = NSTemporaryDirectory() + "utvr-\(ProcessInfo.processInfo.processIdentifier).keychain"
+        try? FileManager.default.removeItem(atPath: path)
+        var keychain: SecKeychain?
+        let created = "transient".withCString { pw in
+            SecKeychainCreate(path, UInt32(strlen(pw)), pw, false, nil, &keychain)
+        }
+        guard created == errSecSuccess, let keychain else {
+            return .Error(.secPKCS12ImportNotSuccess)
+        }
+
+        let options: [String: Any] = [
+            kSecImportExportPassphrase as String: p12Password,
+            kSecImportExportKeychain as String: keychain,
+        ]
+        var raw: CFArray?
+        guard SecPKCS12Import(p12Data as CFData, options as CFDictionary, &raw) == errSecSuccess else {
+            return .Error(.secPKCS12ImportNotSuccess)
+        }
+        cachedIdentity = raw
+        return .Result(raw)
     }
 
     // MARK: client identity generation (one-time, shared across TVs)

@@ -98,6 +98,12 @@ final class DiscoveryEngine: NSObject, ObservableObject {
                                        displayName: friendly, brand: brand)
             }
         }
+        // Surfacing browser health in the unified log makes "no TVs found"
+        // diagnosable: a `waiting(DNSServiceError…)` state here means macOS
+        // denied Local Network access.
+        browser.stateUpdateHandler = { state in
+            NSLog("[discovery] \(serviceType) browser: \(String(describing: state))")
+        }
         browser.start(queue: .main)
         browsers.append(browser)
     }
@@ -108,7 +114,15 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// the connected path.
     private func resolveAndUpsert(endpoint: NWEndpoint, serviceName: String,
                                   displayName: String, brand: TVBrand) {
-        let connection = NWConnection(to: endpoint, using: .tcp)
+        // Force IPv4: left alone, the resolver happily picks an IPv6
+        // link-local address (fe80::…%en0) whose scope suffix the TV drivers'
+        // URL-based transports cannot carry around. Every TV also has an A
+        // record, so v4 always exists.
+        let parameters = NWParameters.tcp
+        if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+            ip.version = .v4
+        }
+        let connection = NWConnection(to: endpoint, using: parameters)
         connection.stateUpdateHandler = { [weak self] state in
             guard case .ready = state else {
                 if case .failed = state { connection.cancel() }
@@ -122,6 +136,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
                     // Service name is stable across IP changes → good identity.
                     id: "\(brand.rawValue):\(serviceName)",
                     brand: brand, name: displayName, host: ip, port: nil)
+                NSLog("[discovery] resolved \(displayName) (\(brand.rawValue)) → \(ip)")
                 self?.upsert(device)
             }
             connection.cancel()
@@ -136,6 +151,12 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             "roku:ecp",
             "urn:lge-com:service:webos-second-screen:1",
             "urn:samsung.com:device:RemoteControlReceiver:1",
+            // Fire TV: modern Fire OS builds no longer advertise the
+            // _amzn-wplay Bonjour service (verified on a 2025 Fire TV Stick),
+            // but they do answer DIAL searches while awake. Chromecasts and
+            // some smart TVs answer this too, so DIAL replies are confirmed
+            // as Amazon via their description XML before being added.
+            "urn:dial-multiscreen-org:service:dial:1",
         ]
 
         let sock = socket(AF_INET, SOCK_DGRAM, 0)
@@ -197,6 +218,14 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             return nil
         }
         guard let st = header("ST") else { return }
+        NSLog("[discovery] SSDP reply from \(ip): \(st)")
+
+        // DIAL replies need the extra Amazon-or-not check; everything else
+        // maps straight from the search target.
+        if st.contains("dial-multiscreen-org") {
+            if let location = header("LOCATION") { confirmFireTV(location: location, ip: ip) }
+            return
+        }
 
         let brand: TVBrand
         if st.contains("roku:ecp") { brand = .roku }
@@ -220,6 +249,27 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             self?.upsert(device)
             self?.fetchFriendlyName(for: device)
         }
+    }
+
+    /// A DIAL responder is only a Fire TV if its device-description XML says
+    /// manufacturer Amazon (Chromecasts/smart TVs answer DIAL too — those are
+    /// ignored here because Android TVs arrive via their own mDNS service).
+    private func confirmFireTV(location: String, ip: String) {
+        guard let url = URL(string: location) else { return }
+        URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 4)) { [weak self] data, _, _ in
+            guard let xml = String(data: data ?? Data(), encoding: .utf8),
+                  xml.contains("<manufacturer>Amazon</manufacturer>") else { return }
+            var name = "Fire TV"
+            if let match = xml.firstMatch(of: #/<friendlyName>([^<]+)</#) {
+                name = String(match.1)
+            }
+            // The UDN uuid is stable across reboots and IP changes.
+            let uuid = xml.firstMatch(of: #/<UDN>uuid:([^<]+)</#).map { String($0.1) } ?? ip
+            let device = DiscoveredTV(id: "fireTV:\(uuid)", brand: .fireTV,
+                                      name: name, host: ip, port: nil)
+            NSLog("[discovery] confirmed Fire TV \"\(name)\" at \(ip)")
+            DispatchQueue.main.async { self?.upsert(device) }
+        }.resume()
     }
 
     /// SSDP replies don't include a human name — each brand exposes one over
