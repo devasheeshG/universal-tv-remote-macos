@@ -13,9 +13,6 @@ let package = Package(
     targets: [
         .target(
             name: "AndroidTVRemoteControl"),
-        .testTarget(
-            name: "AndroidTVRemoteControlTests",
-            dependencies: ["AndroidTVRemoteControl"]),
     ],
     swiftLanguageVersions: [.v4, .v4_2, .v5]
 )

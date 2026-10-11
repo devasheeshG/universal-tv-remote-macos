@@ -1,10 +1,6 @@
 # CI/CD: every push to main builds the app on a macOS runner and publishes a
-# GitHub Release with the zipped .app attached. Pushing a tag like v1.2.3
-# releases under that exact version instead of the auto-generated one.
-#
-# Versioning:
-#   push to main   → v1.0.<run number>   (auto-increments forever)
-#   push tag v*    → the tag itself
+# GitHub Release with a DMG containing the .app. Version and release notes
+# are checked in: update VERSION and .docs/releases/v<version>.md together.
 #
 name: Build & Release
 
@@ -12,6 +8,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write   # needed to create releases
@@ -28,30 +25,31 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run local-only regression tests
-        run: swift test
+      - name: Require written release notes
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ -s ".docs/releases/v${RELEASE_VERSION}.md" ]] || {
+            echo "Write .docs/releases/v${RELEASE_VERSION}.md before releasing."
+            exit 1
+          }
 
       - name: Build app bundle
         run: bash scripts/build-app.sh "${{ steps.version.outputs.version }}"
 
-      - name: Zip for release
-        run: |
-          cd build
-          # ditto preserves the resource forks/permissions Finder expects.
-          ditto -c -k --keepParent "Universal TV Remote.app" "Universal.TV.Remote.for.Mac.zip"
+      - name: Package app in DMG
+        run: bash scripts/package-dmg.sh
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Universal TV Remote for Mac v${{ steps.version.outputs.version }}
-          files: build/Universal.TV.Remote.for.Mac.zip
-          generate_release_notes: true
-          body: |
-            Menu-bar remote for Fire TV, Android/Google TV, Samsung, LG and Roku.
-
-            **Install:** unzip, drag to Applications, then **right-click → Open**
-            the first time (the app is ad-hoc signed, not notarized).
+          files: build/Universal.TV.Remote.for.Mac.dmg
+          fail_on_unmatched_files: true
+          body_path: .docs/releases/v${{ steps.version.outputs.version }}.md
+          generate_release_notes: false

@@ -4,28 +4,9 @@ A native macOS menu-bar remote for **Fire TV, Android / Google TV, Samsung
 Tizen, LG webOS, and Roku**. Open the TV icon in the menu bar to control a
 TV on your local network.
 
-## Screenshots
+## Screenshot
 
-Connected, pairing, expanded apps on a shorter screen, and disconnected
-states, captured from the actual SwiftUI views using an offline demo device.
-Demo app tiles use letter placeholders.
-
-<p>
-  <img src="docs/screenshots/remote-connected.png" alt="Connected remote with power, direction pad, media controls, volume, text input and app shortcuts" width="272" />
-  <img src="docs/screenshots/remote-pairing.png" alt="Pairing card with a centered four-digit PIN field" width="272" />
-</p>
-<p>
-  <img src="docs/screenshots/remote-expanded-compact.png" alt="Expanded apps with the header visible and scrollable content on a shorter screen" width="272" />
-  <img src="docs/screenshots/remote-disconnected.png" alt="Disconnected Fire TV with a Reconnect button" width="272" />
-</p>
-
-<details>
-<summary>TV selection and settings inside the same window</summary>
-<p>
-  <img src="docs/screenshots/remote-devices.png" alt="Inline TV selector separating live and saved TVs" width="272" />
-  <img src="docs/screenshots/remote-settings.png" alt="Inline settings with rename, re-pair, forget and launch at login" width="272" />
-</p>
-</details>
+<img src="docs/screenshots/remote.png" alt="Universal TV Remote for Mac with direction pad, media and volume controls, text input, and installed apps" width="272" />
 
 ## Features
 
@@ -73,8 +54,8 @@ Demo app tiles use letter placeholders.
 
 ## Install
 
-Download `Universal.TV.Remote.for.Mac.zip` from [Releases](../../releases),
-unzip it, move **Universal TV Remote.app** to `/Applications`, and
+Download `Universal.TV.Remote.for.Mac.dmg` from [Releases](../../releases),
+open it, drag **Universal TV Remote.app** into **Applications**, and
 **right-click → Open** on the first launch. Requires **macOS 14 or later**.
 The app is ad-hoc signed, not notarized.
 
@@ -129,41 +110,33 @@ background checks and **Reconnect** never start it automatically.
 - App-list queries vary by firmware. A static catalog is used when an
   installed-app endpoint is unavailable.
 
-## Build and verify
+## Build and release
 
 Requires Xcode command-line tools with Swift 5.9 or later. The Android TV
 protocol dependency is vendored locally under `Vendor/AndroidTVRemoteControl`.
-The regression tests use Swift Testing and require Swift 6 or later.
 
 ```bash
 git clone https://github.com/devasheeshG/universal-tv-remote-macos.git
 cd universal-tv-remote-macos
-swift test
-bash scripts/build-app.sh
+bash scripts/build-app.sh "$(cat VERSION)"
+bash scripts/package-dmg.sh
 ```
 
-The app bundle is written to `build/Universal TV Remote.app`. Tests use
-isolated preferences and intercepted network requests; they do not send
-commands to real TVs. To regenerate the README screenshots from the actual
-app views with an offline demo driver:
-
-```bash
-README_SCREENSHOTS="$PWD/docs/screenshots" swift test --filter ScreenshotTests
-```
-
-If the installed beta macOS SDK lacks its SwiftUI macro plugin, select a
-complete SDK explicitly, for example:
-
-```bash
-swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
-```
+The app bundle is written to `build/Universal TV Remote.app`; the installable
+disk image is `build/Universal.TV.Remote.for.Mac.dmg`. The project has no
+automated test suite.
 
 ## CI/CD
 
-Every push to `main` runs tests, builds on a macOS runner, and publishes a
-GitHub Release (`v1.0.<run>`) with the zipped app attached. A `v*` tag creates
-an explicitly versioned release. See
-[release.yml](.github/workflows/release.yml).
+GitHub Actions builds the app on a macOS runner and packages the `.app` in a
+DMG. It uses the version in [VERSION](VERSION) for pushes to `main`, or the
+version in a `v*` tag. The workflow also supports manual dispatch.
+
+Before publishing, write the release's notes in
+[.docs/releases/](.docs/releases/), named `v<version>.md`, and update
+`VERSION`. The release workflow requires that file and publishes its contents
+as the release body. It does not run tests or generate notes from commit
+messages. See [release.yml](.github/workflows/release.yml).
 
 ## Architecture
 
@@ -171,9 +144,7 @@ an explicitly versioned release. See
 `Discovery.swift` handles discovery, identity merging, and remembered-device
 migration. `TVController.swift` defines device models, session state,
 credential storage, reconnect handling, and the shared driver protocol.
-Each brand has its own driver file. Tests cover duplicate migration,
-credential preservation, Fire TV connection monitoring, and offline
-screenshot generation.
+Each brand has its own driver file.
 
 ## License
 
