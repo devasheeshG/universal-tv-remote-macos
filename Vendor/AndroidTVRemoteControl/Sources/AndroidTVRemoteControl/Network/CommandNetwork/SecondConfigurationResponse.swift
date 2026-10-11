@@ -24,8 +24,7 @@ struct SecondConfigurationResponse {
         return parse(dataArray)
     }
     
-    // The data arrives in portions in arbitrary order, and we attempt to parse parts related to the current state of power,
-    // the currently running application, and the volume level
+    // The data arrives in portions in arbitrary order, and we attempt to parse parts related to the current state of power, the currently running application, and the volume level
     mutating func parse(_ data: [UInt8]) -> Bool {
         var result: Bool = false
         
@@ -72,8 +71,7 @@ struct SecondConfigurationResponse {
         return false
     }
     
-    // incoming data format: [data_length, 162, 1, sub_length, 10, sub_length, 98, runing_app_name_length, runing_app_name_string]
-    // For example: [16, 162, 1, 13, 10, 11, 98, 9, 99, 111, 109, 46, 118, 107, 46, 116, 118]
+    // incoming data format: [data_length, 162, 1, sub_length, 10, sub_length, 98, runing_app_name_length, runing_app_name_string] For example: [16, 162, 1, 13, 10, 11, 98, 9, 99, 111, 109, 46, 118, 107, 46, 116, 118]
     private func parseCurrentApp(_ data: [UInt8]) -> String? {
         guard let index = data.firstIndex(of: 162), index > 0 else {
             return nil

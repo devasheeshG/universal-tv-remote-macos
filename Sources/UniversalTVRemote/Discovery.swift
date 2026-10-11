@@ -1,23 +1,20 @@
 //
-//  Discovery.swift
-//  Universal TV Remote for Mac
+// Discovery.swift Universal TV Remote for Mac
 //
-//  Finds TVs on the local network and keeps a remembered list so known TVs
+// Finds TVs on the local network and keeps a remembered list so known TVs
 //  show up instantly on launch. Two mechanisms cover all five brands:
 //
 //    Bonjour (mDNS), continuous browsers via NWBrowser:
 //      _androidtvremote2._tcp   → Android TV / Google TV
 //      _amzn-wplay._tcp         → Fire TV
 //
-//    SSDP (UDP multicast M-SEARCH), burst on demand via a BSD socket
-//    (Network.framework cannot do the send-multicast/receive-unicast dance
+// SSDP (UDP multicast M-SEARCH), burst on demand via a BSD socket (Network.framework cannot do the send-multicast/receive-unicast dance
 //    SSDP needs):
 //      roku:ecp                                    → Roku
 //      urn:lge-com:service:webos-second-screen:1   → LG webOS
-//      urn:samsung.com:device:RemoteControlReceiver:1 → Samsung Tizen
+// urn:samsung.com:device:RemoteControlReceiver:1 → Samsung Tizen
 //
-//  First use triggers macOS's one-time "allow local network access" prompt;
-//  nothing is discoverable until the user allows it.
+// First use triggers macOS's one-time "allow local network access" prompt; nothing is discoverable until the user allows it.
 //
 
 import Foundation
@@ -41,8 +38,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     private let ssdpQueue = DispatchQueue(label: "ssdp.scan", qos: .utility)
     private static let rememberedKey = "rememberedDevices"
     private static let customNamesKey = "customNames"
-    /// User-chosen nicknames keyed by device id. These always win over the
-    /// name the TV broadcasts, and survive re-discovery.
+    /// User-chosen nicknames keyed by device id. These always win over the name the TV broadcasts, and survive re-discovery.
     private var customNames: [String: String] = [:]
     private var aliases: [String: String] = [:]
     private let defaults: UserDefaults
@@ -54,9 +50,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
 
     // MARK: lifecycle
 
-    /// Called once at app start: load remembered TVs and keep the Bonjour
-    /// browsers running for the whole app lifetime (they are cheap and make
-    /// Fire/Android TVs appear the moment they join the network).
+    /// Called once at app start: load remembered TVs and keep the Bonjour browsers running for the whole app lifetime (they are cheap and make Fire/Android TVs appear the moment they join the network).
     func start() {
         loadRememberedDevices()
         startBonjourBrowser(serviceType: "_androidtvremote2._tcp", brand: .androidTV)
@@ -114,14 +108,12 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         persist()
     }
 
-    /// The name to display for a TV: the user's nickname if they set one,
-    /// otherwise whatever the TV broadcast.
+    /// The name to display for a TV: the user's nickname if they set one, otherwise whatever the TV broadcast.
     func displayName(for device: DiscoveredTV) -> String {
         customNames[device.id] ?? devices.first(where: { $0.id == device.id })?.name ?? device.name
     }
 
-    /// Give a TV a custom nickname (Settings → Rename). An empty/blank name
-    /// clears the nickname and reverts to the discovered name.
+    /// Give a TV a custom nickname (Settings → Rename). An empty/blank name clears the nickname and reverts to the discovered name.
     func rename(_ device: DiscoveredTV, to newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         customNames[device.id] = trimmed.isEmpty ? nil : trimmed
@@ -129,9 +121,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         objectWillChange.send()   // devices array unchanged; nudge observers
     }
 
-    /// Manually add a TV that discovery didn't find (different subnet, mDNS
-    /// blocked by the router, etc.). The user supplies brand + IP; we still
-    /// try to upgrade the placeholder name from the device itself.
+    /// Manually add a TV that discovery didn't find (different subnet, mDNS blocked by the router, etc.). The user supplies brand + IP; we still try to upgrade the placeholder name from the device itself.
     func addManual(brand: TVBrand, host: String) -> DiscoveredTV {
         let device = DiscoveredTV(id: "\(brand.rawValue):\(host)", brand: brand,
                                   name: "\(brand.displayName) (\(host))", host: host, port: nil)
@@ -164,8 +154,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             self.refreshAvailability()
             for result in results {
                 guard case .service(let name, _, _, _) = result.endpoint else { continue }
-                // TXT records sometimes carry a friendlier name than the mDNS
-                // instance name (Fire TV instances look like "amzn.dmgr:<hash>…").
+                // TXT records sometimes carry a friendlier name than the mDNS instance name (Fire TV instances look like "amzn.dmgr:<hash>…").
                 var friendly = name
                 if case .bonjour(let txt) = result.metadata,
                    let fn = txt.dictionary["fn"] ?? txt.dictionary["n"], !fn.isEmpty {
@@ -178,9 +167,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
                                        displayName: friendly, brand: brand)
             }
         }
-        // Surfacing browser health in the unified log makes "no TVs found"
-        // diagnosable: a `waiting(DNSServiceError…)` state here means macOS
-        // denied Local Network access.
+        // Surfacing browser health in the unified log makes "no TVs found" diagnosable: a `waiting(DNSServiceError…)` state here means macOS denied Local Network access.
         browser.stateUpdateHandler = { state in
             NSLog("[discovery] \(serviceType) browser: \(String(describing: state))")
         }
@@ -188,16 +175,10 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         browsers.append(browser)
     }
 
-    /// Bonjour gives us a service endpoint, not an IP — and the TV drivers
-    /// need an IP to hit their fixed control ports. Briefly open a TCP
-    /// connection to the advertised service and read the remote address off
-    /// the connected path.
+    /// Bonjour gives us a service endpoint, not an IP — and the TV drivers need an IP to hit their fixed control ports. Briefly open a TCP connection to the advertised service and read the remote address off the connected path.
     private func resolveAndUpsert(endpoint: NWEndpoint, serviceName: String,
                                   displayName: String, brand: TVBrand) {
-        // Force IPv4: left alone, the resolver happily picks an IPv6
-        // link-local address (fe80::…%en0) whose scope suffix the TV drivers'
-        // URL-based transports cannot carry around. Every TV also has an A
-        // record, so v4 always exists.
+        // Force IPv4: left alone, the resolver happily picks an IPv6 link-local address (fe80::…%en0) whose scope suffix the TV drivers' URL-based transports cannot carry around. Every TV also has an A record, so v4 always exists.
         let parameters = NWParameters.tcp
         if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
             ip.version = .v4
@@ -237,9 +218,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             "urn:samsung.com:device:RemoteControlReceiver:1",
             // Fire TV: modern Fire OS builds no longer advertise the
             // _amzn-wplay Bonjour service (verified on a 2025 Fire TV Stick),
-            // but they do answer DIAL searches while awake. Chromecasts and
-            // some smart TVs answer this too, so DIAL replies are confirmed
-            // as Amazon via their description XML before being added.
+            // but they do answer DIAL searches while awake. Chromecasts and some smart TVs answer this too, so DIAL replies are confirmed as Amazon via their description XML before being added.
             "urn:dial-multiscreen-org:service:dial:1",
         ]
 
@@ -271,8 +250,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             }
         }
 
-        // Read replies until ~2.5 s of quiet has passed. Devices reply to
-        // every M-SEARCH they match, so duplicates are normal — upsert by id.
+        // Read replies until ~2.5 s of quiet has passed. Devices reply to every M-SEARCH they match, so duplicates are normal — upsert by id.
         var buffer = [UInt8](repeating: 0, count: 4096)
         var sender = sockaddr_in()
         var senderLen = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -304,8 +282,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         guard let st = header("ST") else { return }
         NSLog("[discovery] SSDP reply from \(ip): \(st)")
 
-        // DIAL replies need the extra Amazon-or-not check; everything else
-        // maps straight from the search target.
+        // DIAL replies need the extra Amazon-or-not check; everything else maps straight from the search target.
         if st.contains("dial-multiscreen-org") {
             if let location = header("LOCATION") { confirmFireTV(location: location, ip: ip) }
             return
@@ -319,8 +296,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
 
         // USN survives IP changes; fall back to the IP if a device omits it.
         let usn = header("USN")?.components(separatedBy: "::")[0] ?? ip
-        // Roku's ECP port officially is 8060, but trust the LOCATION header
-        // (e.g. "http://192.168.1.9:8060/") when present.
+        // Roku's ECP port officially is 8060, but trust the LOCATION header (e.g. "http://192.168.1.9:8060/") when present.
         var port: Int? = nil
         if brand == .roku, let location = header("LOCATION"),
            let locationPort = URLComponents(string: location)?.port {
@@ -336,9 +312,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         }
     }
 
-    /// A DIAL responder is only a Fire TV if its device-description XML says
-    /// manufacturer Amazon (Chromecasts/smart TVs answer DIAL too — those are
-    /// ignored here because Android TVs arrive via their own mDNS service).
+    /// A DIAL responder is only a Fire TV if its device-description XML says manufacturer Amazon (Chromecasts/smart TVs answer DIAL too — those are ignored here because Android TVs arrive via their own mDNS service).
     private func confirmFireTV(location: String, ip: String) {
         guard let url = URL(string: location) else { return }
         URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 4)) { [weak self] data, _, _ in
@@ -357,8 +331,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         }.resume()
     }
 
-    /// SSDP replies don't include a human name — each brand exposes one over
-    /// a small unauthenticated HTTP endpoint, fetched best-effort.
+    /// SSDP replies don't include a human name — each brand exposes one over a small unauthenticated HTTP endpoint, fetched best-effort.
     private func fetchFriendlyName(for device: DiscoveredTV) {
         let url: URL
         switch device.brand {
@@ -399,8 +372,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
 
     // MARK: bookkeeping
 
-    /// Insert or refresh one device, keeping any better name we already had,
-    /// and persist so the list survives restarts.
+    /// Insert or refresh one device, keeping any better name we already had, and persist so the list survives restarts.
     @discardableResult
     func upsert(_ incoming: DiscoveredTV, discovered: Bool = true) -> DiscoveredTV {
         let device = DiscoveredTV(id: incoming.discoveryIdentity, brand: incoming.brand,
@@ -431,8 +403,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         if let index {
             devices[index].host = device.host
             devices[index].port = device.port ?? devices[index].port
-            // Only overwrite the name when the new one is more specific than
-            // a bare brand placeholder.
+            // Only overwrite the name when the new one is more specific than a bare brand placeholder.
             if device.name != device.brand.displayName,
                device.name != "Amazon Fling Device" || devices[index].name == device.brand.displayName {
                 devices[index].name = device.name
@@ -447,8 +418,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         return devices.first { $0.id == retainedID }!
     }
 
-    /// Discovery availability is separate from remote-service connectivity.
-    /// Saved devices never become live merely because preferences were loaded.
+    /// Discovery availability is separate from remote-service connectivity. Saved devices never become live merely because preferences were loaded.
     func refreshAvailability(now: Date = Date()) {
         lastSeen = lastSeen.filter { now.timeIntervalSince($0.value) < 45 }
         let current = Set(bonjourServices.values).union(lastSeen.keys)

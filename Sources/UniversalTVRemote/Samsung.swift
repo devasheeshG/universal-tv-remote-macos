@@ -1,32 +1,23 @@
 //
-//  Samsung.swift
-//  Universal TV Remote for Mac
+// Samsung.swift Universal TV Remote for Mac
 //
-//  Driver for Samsung Tizen Smart TVs (2016+) via the WebSocket remote API.
+// Driver for Samsung Tizen Smart TVs (2016+) via the WebSocket remote API.
 //
 //    Channel    wss://<ip>:8002/api/v2/channels/samsung.remote.control
 //                   ?name=<base64 app name>&token=<token>
-//               (self-signed cert → trust override below)
+// (self-signed cert → trust override below)
 //    Pairing    First connect pops an Allow/Deny dialog on the TV. Accepting
-//               it delivers an "ms.channel.connect" event whose payload may
-//               carry data.token — persist it and every later connect is
-//               silent.
+// it delivers an "ms.channel.connect" event whose payload may carry data.token — persist it and every later connect is silent.
 //    Keys       {"method":"ms.remote.control","params":{"Cmd":"Click",
-//                "DataOfCmd":"KEY_VOLUP","Option":"false",
-//                "TypeOfRemote":"SendRemoteKey"}}
+// "DataOfCmd":"KEY_VOLUP","Option":"false", "TypeOfRemote":"SendRemoteKey"}}
 //    Text       Cmd = base64(text), DataOfCmd:"base64",
-//               TypeOfRemote:"SendInputString"  (needs a focused text field
-//               on the TV), then SendInputEnd to commit.
+// TypeOfRemote:"SendInputString"  (needs a focused text field on the TV), then SendInputEnd to commit.
 //    Apps       POST http://<ip>:8001/api/v2/applications/<appId>  (the
-//               unauthenticated legacy REST port — simpler than the ws event)
+// unauthenticated legacy REST port — simpler than the ws event)
 //    Power      OFF = KEY_POWER. ON = Wake-on-LAN (the API is down when the
-//               TV is off), so we cache the MAC from the ARP table while
-//               connected.
+// TV is off), so we cache the MAC from the ARP table while connected.
 //
-//  Reference: github.com/xchwarze/samsung-tv-ws-api (Home Assistant's
-//  backend) and ollo69/ha-samsungtv-smart for the text-input frames.
-//  NOTE (untested driver): the developer has no Samsung hardware — written
-//  faithfully from those references but unverified on a real TV.
+// Reference: github.com/xchwarze/samsung-tv-ws-api (Home Assistant's backend) and ollo69/ha-samsungtv-smart for the text-input frames. NOTE (untested driver): the developer has no Samsung hardware — written faithfully from those references but unverified on a real TV.
 //
 
 import Foundation
@@ -36,8 +27,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
     var onTokenIssued: ((String) -> Void)?
     var onAppsChanged: (() -> Void)?
 
-    /// Catalog filtered down to what the TV reports installed (see
-    /// filterInstalledApps); nil until that probe finishes.
+    /// Catalog filtered down to what the TV reports installed (see filterInstalledApps); nil until that probe finishes.
     private var liveApps: [TVApp]?
 
     private let device: DiscoveredTV
@@ -64,9 +54,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
         socket?.resume()
         receiveLoop()
 
-        // Without a token the TV is now showing its Allow dialog; tell the
-        // UI to say "accept on your TV". With a token, we stay "connecting"
-        // until ms.channel.connect confirms.
+        // Without a token the TV is now showing its Allow dialog; tell the UI to say "accept on your TV". With a token, we stay "connecting" until ms.channel.connect confirms.
         if token == nil {
             onStateChange?(.awaitingPairing(.onScreenAllow))
         }
@@ -92,8 +80,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
     }
 
     func send(_ key: RemoteKey) {
-        // Power ON can't travel over a socket that doesn't exist — if we are
-        // not connected, throw a WoL packet at the cached MAC instead.
+        // Power ON can't travel over a socket that doesn't exist — if we are not connected, throw a WoL packet at the cached MAC instead.
         if key == .power, socket == nil || socket?.state != .running {
             if let mac = UserDefaults.standard.string(forKey: macKey) {
                 sendWakeOnLAN(macAddress: mac)
@@ -112,8 +99,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
         case .back:        code = "KEY_RETURN"
         case .home:        code = "KEY_HOME"
         case .menu:        code = "KEY_MENU"
-        // Tizen has no play/pause toggle key; KEY_PLAY_BACK behaves as the
-        // toggle on recent models (falling back to plain play elsewhere).
+        // Tizen has no play/pause toggle key; KEY_PLAY_BACK behaves as the toggle on recent models (falling back to plain play elsewhere).
         case .playPause:   code = "KEY_PLAY_BACK"
         // Tizen has no dedicated skip keys; seek keys are the closest match.
         case .rewind, .skipBackward:     code = "KEY_REWIND"
@@ -151,17 +137,14 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
     }
 
     func launchApp(_ appID: String) {
-        // The :8001 REST port launches apps without any auth — far simpler
-        // than the ws ed.apps.launch event and works on the same models.
+        // The :8001 REST port launches apps without any auth — far simpler than the ws ed.apps.launch event and works on the same models.
         var request = URLRequest(url: URL(string: "http://\(device.host):8001/api/v2/applications/\(appID)")!)
         request.httpMethod = "POST"
         request.timeoutInterval = 5
         session.dataTask(with: request).resume()
     }
 
-    /// Tizen app ids, collected from samsung-tv-ws-api issue threads — these
-    /// are stable store ids, but Samsung has been known to change them.
-    /// Filtered to installed apps once the :8001 probe completes.
+    /// Tizen app ids, collected from samsung-tv-ws-api issue threads — these are stable store ids, but Samsung has been known to change them. Filtered to installed apps once the :8001 probe completes.
     var apps: [TVApp] {
         if let liveApps { return liveApps }
         return [
@@ -188,8 +171,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
             guard let self else { return }
             switch result {
             case .failure:
-                // A refused/dropped socket with no stored token usually means
-                // the user hit Deny on the TV.
+                // A refused/dropped socket with no stored token usually means the user hit Deny on the TV.
                 self.onStateChange?(self.hadStoredToken
                     ? .failed("Samsung TV connection lost")
                     : .failed("Pairing was denied on the TV"))
@@ -197,8 +179,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
                 if case .string(let text) = message,
                    let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
                    json["event"] as? String == "ms.channel.connect" {
-                    // Officially connected. A fresh token rides along on the
-                    // very first (post-Allow) connect.
+                    // Officially connected. A fresh token rides along on the very first (post-Allow) connect.
                     if let data = json["data"] as? [String: Any],
                        let newToken = data["token"] as? String ?? (data["token"] as? Int).map(String.init) {
                         self.onTokenIssued?(newToken)
@@ -212,10 +193,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
         }
     }
 
-    /// GET :8001/api/v2/applications/<id> answers 200 for installed apps and
-    /// 404 for absent ones — probe the catalog and keep only what's there.
-    /// If nothing probes positive (older firmware without the endpoint) the
-    /// static catalog stays.
+    /// GET :8001/api/v2/applications/<id> answers 200 for installed apps and 404 for absent ones — probe the catalog and keep only what's there. If nothing probes positive (older firmware without the endpoint) the static catalog stays.
     private func filterInstalledApps() {
         let catalog = apps
         var installed: [TVApp] = []
@@ -235,8 +213,7 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
         }
     }
 
-    /// Remember the TV's MAC while we can see it, so the power button can
-    /// Wake-on-LAN it later when the TV is off and unreachable.
+    /// Remember the TV's MAC while we can see it, so the power button can Wake-on-LAN it later when the TV is off and unreachable.
     private func cacheMACForWakeOnLAN() {
         if let mac = macAddressFromARP(ip: device.host) {
             UserDefaults.standard.set(mac, forKey: macKey)

@@ -1,28 +1,23 @@
 //
-//  FireTV.swift
-//  Universal TV Remote for Mac
+// FireTV.swift Universal TV Remote for Mac
 //
-//  Driver for Amazon Fire TV via the (private, reverse-engineered) REST API
-//  the official mobile remote apps use. No ADB, no developer options — the
-//  user just types a PIN the TV displays.
+// Driver for Amazon Fire TV via the (private, reverse-engineered) REST API the official mobile remote apps use. No ADB, no developer options — the user just types a PIN the TV displays.
 //
 //    Base       https://<ip>:8080  (self-signed cert → trust override below)
 //    Headers    X-Api-Key: 0987654321       (hardcoded, same for everyone)
 //               X-Client-Token: <token>     (after pairing)
 //    Pairing    POST /v1/FireTV/pin/display {"friendlyName": ...} → PIN on TV
-//               POST /v1/FireTV/pin/verify  {"pin": "1234"}
+// POST /v1/FireTV/pin/verify  {"pin": "1234"}
 //                    → 200 {"description": "<persistent token>"}
 //    Keys       POST /v1/FireTV?action=dpad_up|select|back|home|menu|...
-//                    body {"keyActionType": "keyDownUp"}
+// body {"keyActionType": "keyDownUp"}
 //    Media      POST /v1/media?action=play|pause|scan  (scan takes direction)
 //    Text       POST /v1/FireTV/text  {"text": "..."}
 //    Apps       POST /v1/FireTV/app/<package>
 //    Wake       POST http://<ip>:8009/apps/FireTVRemote   (plain-HTTP DIAL
-//               wake — the 8080 service is down while the TV sleeps)
+// wake — the 8080 service is down while the TV sleeps)
 //
-//  Reference: github.com/mase1981/uc-intg-firetv (endpoints verified against
-//  its client.py). Older Fire OS builds answer some commands with HTTP 500
-//  yet still execute them, so 500 is treated as success like uc-intg does.
+// Reference: github.com/mase1981/uc-intg-firetv (endpoints verified against its client.py). Older Fire OS builds answer some commands with HTTP 500 yet still execute them, so 500 is treated as success like uc-intg does.
 //
 
 import Foundation
@@ -32,8 +27,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
     var onTokenIssued: ((String) -> Void)?
     var onAppsChanged: (() -> Void)?
 
-    /// The TV's real installed-app list, fetched after connecting. While nil
-    /// the static catalog below stands in.
+    /// The TV's real installed-app list, fetched after connecting. While nil the static catalog below stands in.
     private var liveApps: [TVApp]?
 
     private let device: DiscoveredTV
@@ -98,8 +92,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["pin": code])
         session.dataTask(with: request) { [weak self] data, response, _ in
             guard let self else { return }
-            // The persistent token comes back in — of all places — the
-            // "description" field of the JSON body.
+            // The persistent token comes back in — of all places — the "description" field of the JSON body.
             if (response as? HTTPURLResponse)?.statusCode == 200,
                let data,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -163,8 +156,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         healthTask?.resume()
     }
 
-    /// A powered-on Fire TV can have its remote app stopped. DIAL exposes
-    /// that state through GET; checking it must never launch the app.
+    /// A powered-on Fire TV can have its remote app stopped. DIAL exposes that state through GET; checking it must never launch the app.
     private func explainUnavailable(generation currentGeneration: Int) {
         let request = URLRequest(url: URL(string: "http://\(device.host):8009/apps/FireTVRemote")!,
                                  cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
@@ -190,9 +182,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         // Media transport lives on its own endpoint with its own actions.
         case .playPause:
             post(path: "v1/media", query: "action=play", body: nil)
-        // A single scan press behaves as the ~10 s skip inside Fire TV players
-        // (same as one tap of ⏪/⏩ on the physical remote), so skip and
-        // rewind/fast-forward share the endpoint.
+        // A single scan press behaves as the ~10 s skip inside Fire TV players (same as one tap of ⏪/⏩ on the physical remote), so skip and rewind/fast-forward share the endpoint.
         case .rewind, .skipBackward:
             post(path: "v1/media", query: "action=scan",
                  body: ["direction": "back", "keyAction": ["keyActionType": "keyDownUp"]])
@@ -200,12 +190,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
             post(path: "v1/media", query: "action=scan",
                  body: ["direction": "forward", "keyAction": ["keyActionType": "keyDownUp"]])
 
-        // Power is a real on/off toggle. A Fire TV Stick is never truly off;
-        // "off" is sleep (screen dark + CEC tells the TV to power off), "on"
-        // is a DIAL wake (restarts the sleeping 8080 service + CEC powers the
-        // TV back on). We can't ask a sleeping Stick its state — the API is
-        // down — so reachability IS the state: a quick probe, then sleep if
-        // it answers, wake if it doesn't.
+        // Power is a real on/off toggle. A Fire TV Stick is never truly off; "off" is sleep (screen dark + CEC tells the TV to power off), "on" is a DIAL wake (restarts the sleeping 8080 service + CEC powers the TV back on). We can't ask a sleeping Stick its state — the API is down — so reachability IS the state: a quick probe, then sleep if it answers, wake if it doesn't.
         case .power:
             var probe = URLRequest(url: base)
             probe.allHTTPHeaderFields = headers(includeToken: false)
@@ -247,9 +232,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         post(path: "v1/FireTV/app/\(appID)", query: nil, body: nil)
     }
 
-    /// The TV's own installed-apps list once fetched; before that, a static
-    /// catalog of common Fire OS packages (from the uc-intg-firetv database)
-    /// so the row isn't empty during the first connect.
+    /// The TV's own installed-apps list once fetched; before that, a static catalog of common Fire OS packages (from the uc-intg-firetv database) so the row isn't empty during the first connect.
     var apps: [TVApp] {
         if let liveApps { return liveApps }
         return [
@@ -273,9 +256,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
     /// GET /v1/FireTV/apps — an undocumented but very real endpoint that
     /// returns exactly what the shortcut row wants:
     ///   [{"appId": "com.netflix.ninja", "name": "Netflix",
-    ///     "iconArtSmallUri": "https://m.media-amazon.com/…png",
-    ///     "isInstalled": true}, …]
-    /// (Discovered by probing; not in any reference implementation.)
+    /// "iconArtSmallUri": "https://m.media-amazon.com/…png", "isInstalled": true}, …] (Discovered by probing; not in any reference implementation.)
     private func fetchInstalledApps() {
         var request = URLRequest(url: base.appendingPathComponent("v1/FireTV/apps"))
         request.allHTTPHeaderFields = headers()
@@ -289,8 +270,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
                 guard entry["isInstalled"] as? Bool == true,
                       let id = entry["appId"] as? String,
                       var name = entry["name"] as? String else { return nil }
-                // Store listings are chatty ("Spotify - Music and Podcasts",
-                // "VLC for Fire") — keep just the product name for the tile.
+                // Store listings are chatty ("Spotify - Music and Podcasts", "VLC for Fire") — keep just the product name for the tile.
                 name = name.components(separatedBy: " - ")[0]
                     .components(separatedBy: ":")[0]
                     .replacingOccurrences(of: " for Fire TV", with: "")
@@ -300,8 +280,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
             }
             guard !apps.isEmpty else { return }
             var installed = apps
-            // The endpoint only lists store-installed apps; Prime Video is
-            // part of Fire OS itself and never appears, yet always exists.
+            // The endpoint only lists store-installed apps; Prime Video is part of Fire OS itself and never appears, yet always exists.
             if !installed.contains(where: { $0.id == "com.amazon.avod" }) {
                 installed.append(TVApp(name: "Prime Video", id: "com.amazon.avod", domain: "primevideo.com"))
             }
@@ -317,16 +296,14 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         var headers = [
             "X-Api-Key": "0987654321",
             "Content-Type": "application/json",
-            // The API rejects unfamiliar user agents on some builds; mimic
-            // the Android remote app like every other implementation does.
+            // The API rejects unfamiliar user agents on some builds; mimic the Android remote app like every other implementation does.
             "User-Agent": "okhttp/4.10.0",
         ]
         if includeToken, let token { headers["X-Client-Token"] = token }
         return headers
     }
 
-    /// Navigation keys: POST /v1/FireTV?action=<action> with a keyDownUp body
-    /// (a single full press — the API also supports keyDown/keyUp for holds).
+    /// Navigation keys: POST /v1/FireTV?action=<action> with a keyDownUp body (a single full press — the API also supports keyDown/keyUp for holds).
     private func navigation(_ action: String) {
         post(path: "v1/FireTV", query: "action=\(action)", body: ["keyActionType": "keyDownUp"])
     }
@@ -339,8 +316,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         request.allHTTPHeaderFields = headers()
         if let body { request.httpBody = try? JSONSerialization.data(withJSONObject: body) }
         session.dataTask(with: request) { [weak self] _, response, error in
-            // 401/403 = the pairing was revoked on the TV; tell the UI so the
-            // user knows to re-pair rather than silently eating presses.
+            // 401/403 = the pairing was revoked on the TV; tell the UI so the user knows to re-pair rather than silently eating presses.
             if let status = (response as? HTTPURLResponse)?.statusCode, status == 401 || status == 403 {
                 DispatchQueue.main.async {
                     self?.authorizationRejected = true
@@ -353,8 +329,7 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         }.resume()
     }
 
-    /// DIAL wake-up on port 8009 — plain HTTP, no auth. Wakes the TV (and its
-    /// 8080 REST service) from sleep; harmless if it's already awake.
+    /// DIAL wake-up on port 8009 — plain HTTP, no auth. Wakes the TV (and its 8080 REST service) from sleep; harmless if it's already awake.
     private func wakeUp() {
         var request = URLRequest(url: URL(string: "http://\(device.host):8009/apps/FireTVRemote")!)
         request.httpMethod = "POST"

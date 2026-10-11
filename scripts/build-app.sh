@@ -3,10 +3,7 @@
 # build-app.sh — compile the Swift package and wrap it into a proper
 # "Universal TV Remote.app" bundle.
 #
-# A menu-bar app cannot ship as a bare executable: LSUIElement (hide from
-# Dock), the local-network usage string, ATS local-networking exemption, and
-# the icon all live in the bundle's Info.plist. SwiftPM has no bundling step,
-# so this script is it.
+# A menu-bar app cannot ship as a bare executable: LSUIElement (hide from Dock), the local-network usage string, ATS local-networking exemption, and the icon all live in the bundle's Info.plist. SwiftPM has no bundling step, so this script is it.
 #
 # Usage:
 #   scripts/build-app.sh [version]     # version defaults to 0.0.0-dev
@@ -31,8 +28,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/UniversalTVRemote "$APP/Contents/MacOS/$APP_NAME"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-# The Info.plist is generated here (not checked in) so the CI-provided
-# version number lands in CFBundleShortVersionString.
+# The Info.plist is generated here (not checked in) so the CI-provided version number lands in CFBundleShortVersionString.
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -72,8 +68,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature: fine for personal use and GitHub releases (downloaders
-# right-click → Open once). Swap "-" for a Developer ID to notarize later.
+# Ad-hoc signature: fine for personal use and GitHub releases (downloaders right-click → Open once). Swap "-" for a Developer ID to notarize later.
 echo "▸ codesign (ad-hoc)"
 codesign --force --sign - "$APP"
 

@@ -1,8 +1,6 @@
 # AndroidTVRemoteControl
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![SPM Compatible](https://img.shields.io/badge/SPM-Compatible-brightgreen.svg)](https://swift.org/package-manager)
-[![CocoaPods](https://img.shields.io/cocoapods/v/AndroidTVRemoteControl.svg)](https://cocoapods.org/pods/AndroidTVRemoteControl)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) [![SPM Compatible](https://img.shields.io/badge/SPM-Compatible-brightgreen.svg)](https://swift.org/package-manager) [![CocoaPods](https://img.shields.io/cocoapods/v/AndroidTVRemoteControl.svg)](https://cocoapods.org/pods/AndroidTVRemoteControl)
 
 Please suport me [![Support](https://img.shields.io/badge/Support-Buy%20Me%20a%20Coffee-brightgreen.svg)](https://www.buymeacoffee.com/odyshewroman)
 
@@ -38,8 +36,7 @@ First of all, you need a certificate to establish a TLS connection with an Andro
 
 The entire process is divided into two parts - **Pairing** and **Sending** commands (and yes, there is also an internal pairing process there).
 
-Next, you need to create an object - CryptoManager, passing your logic for obtaining the public key of the certificate within the closure.
-Then, create a TLSManager and pass the logic for obtaining a CFArray - an array containing a dictionary for every item extracted from the certificate. You also need to set a closure where you will pass the SecTrust obtained from the Android TV OS device when connecting to it to the CryptoManager.
+Next, you need to create an object - CryptoManager, passing your logic for obtaining the public key of the certificate within the closure. Then, create a TLSManager and pass the logic for obtaining a CFArray - an array containing a dictionary for every item extracted from the certificate. You also need to set a closure where you will pass the SecTrust obtained from the Android TV OS device when connecting to it to the CryptoManager.
 
 <img src="/assets/preparing.png">
 

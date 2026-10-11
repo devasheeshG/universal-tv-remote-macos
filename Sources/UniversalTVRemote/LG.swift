@@ -1,29 +1,23 @@
 //
-//  LG.swift
-//  Universal TV Remote for Mac
+// LG.swift Universal TV Remote for Mac
 //
-//  Driver for LG webOS Smart TVs via SSAP (Secure Sockets Application
-//  Protocol) — JSON over WebSocket, plus a second raw-ish socket for buttons.
+// Driver for LG webOS Smart TVs via SSAP (Secure Sockets Application Protocol) — JSON over WebSocket, plus a second raw-ish socket for buttons.
 //
 //    Channel    wss://<ip>:3001  (2020+ firmware; self-signed cert)
-//               older sets only speak ws://<ip>:3000 — we fall back.
+// older sets only speak ws://<ip>:3000 — we fall back.
 //    Pairing    Send a "register" message carrying a permission manifest.
-//               The TV shows an Accept dialog; accepting returns a
-//               "client-key" we persist for silent re-registration.
+// The TV shows an Accept dialog; accepting returns a "client-key" we persist for silent re-registration.
 //    Commands   {"type":"request","id":"...","uri":"ssap://audio/volumeUp"}
 //    Buttons    D-pad & friends do NOT have SSAP URIs. Instead we request
-//               ssap://com.webos.service.networkinput/getPointerInputSocket,
+// ssap://com.webos.service.networkinput/getPointerInputSocket,
 //               open the returned WebSocket, and send plain-text frames:
-//                   type:button\nname:UP\n\n
+// type:button\nname:UP\n\n
 //    Text       ssap://com.webos.service.ime/insertText
 //    Apps       ssap://system.launcher/launch {"id":"netflix"}
 //    Power      OFF = ssap://system/turnOff. ON = Wake-on-LAN (MAC cached
-//               from the ARP table while connected).
+// from the ARP table while connected).
 //
-//  Reference: home-assistant-libs/aiowebostv and lgtv2 (the manifest below
-//  is the canonical one every client sends).
-//  NOTE (untested driver): the developer has no LG hardware — written
-//  faithfully from those references but unverified on a real TV.
+// Reference: home-assistant-libs/aiowebostv and lgtv2 (the manifest below is the canonical one every client sends). NOTE (untested driver): the developer has no LG hardware — written faithfully from those references but unverified on a real TV.
 //
 
 import Foundation
@@ -33,8 +27,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
     var onTokenIssued: ((String) -> Void)?
     var onAppsChanged: (() -> Void)?
 
-    /// Real installed apps from listApps (system apps filtered out); nil
-    /// until the TV answers.
+    /// Real installed apps from listApps (system apps filtered out); nil until the TV answers.
     private var liveApps: [TVApp]?
 
     private let device: DiscoveredTV
@@ -46,9 +39,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
     private var storedKey: String?
     private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
     private var macKey: String { "mac.\(device.id)" }
-    /// Local play/pause toggle: webOS exposes separate play & pause URIs and
-    /// no toggle, so we alternate and let the first press mean "pause"
-    /// (you reach for the button mid-playback far more often than mid-pause).
+    /// Local play/pause toggle: webOS exposes separate play & pause URIs and no toggle, so we alternate and let the first press mean "pause" (you reach for the button mid-playback far more often than mid-pause).
     private var nextTransportIsPause = true
 
     init(device: DiscoveredTV) {
@@ -113,8 +104,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
             case .mute:  button = "MUTE"
             default:     return   // handled above
             }
-            // The input socket speaks newline-delimited key:value frames,
-            // terminated by a blank line — not JSON.
+            // The input socket speaks newline-delimited key:value frames, terminated by a blank line — not JSON.
             inputSocket?.send(.string("type:button\nname:\(button)\n\n")) { _ in }
         }
     }
@@ -129,8 +119,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
         request(uri: "ssap://system.launcher/launch", payload: ["id": appID])
     }
 
-    /// The TV's installed list once known; until then, well-known webOS app
-    /// ids (stable across firmware versions per aiowebostv docs).
+    /// The TV's installed list once known; until then, well-known webOS app ids (stable across firmware versions per aiowebostv docs).
     var apps: [TVApp] {
         if let liveApps { return liveApps }
         return [
@@ -151,12 +140,9 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
         register()
     }
 
-    /// The registration handshake. With a stored client-key the TV answers
-    /// "registered" silently; without one it shows its Accept dialog first.
+    /// The registration handshake. With a stored client-key the TV answers "registered" silently; without one it shows its Accept dialog first.
     private func register() {
-        // The canonical permission manifest every webOS client sends (from
-        // lgtv2). The TV grants what it recognizes; asking for more than we
-        // use today is harmless and saves re-pairing when features grow.
+        // The canonical permission manifest every webOS client sends (from lgtv2). The TV grants what it recognizes; asking for more than we use today is harmless and saves re-pairing when features grow.
         var payload: [String: Any] = [
             "forcePairing": false,
             "pairingType": "PROMPT",
@@ -187,9 +173,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
             guard let self else { return }
             switch result {
             case .failure:
-                // New LG firmware requires wss:3001, old firmware only has
-                // ws:3000 — if the first flavor dies immediately, try the
-                // other before declaring failure.
+                // New LG firmware requires wss:3001, old firmware only has ws:3000 — if the first flavor dies immediately, try the other before declaring failure.
                 if !self.triedLegacyPort {
                     self.triedLegacyPort = true
                     self.open(urlString: "ws://\(self.device.host):3000")
@@ -210,8 +194,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
         let payload = json["payload"] as? [String: Any]
 
         if type == "registered" {
-            // Paired (or silently re-registered). Persist the key, grab the
-            // button socket, cache the MAC for Wake-on-LAN.
+            // Paired (or silently re-registered). Persist the key, grab the button socket, cache the MAC for Wake-on-LAN.
             if let clientKey = payload?["client-key"] as? String {
                 storedKey = clientKey
                 onTokenIssued?(clientKey)
@@ -236,8 +219,7 @@ final class LGDriver: NSObject, TVDriver, URLSessionDelegate {
             inputSocket?.resume()
         } else if type == "response",
                   let appList = payload?["apps"] as? [[String: Any]] {
-            // Answer to listApps. It includes dozens of system components
-            // (com.webos.*, com.palm.*) — keep only real user-facing apps.
+            // Answer to listApps. It includes dozens of system components (com.webos.*, com.palm.*) — keep only real user-facing apps.
             let installed = appList.compactMap { entry -> TVApp? in
                 guard let id = entry["id"] as? String,
                       let title = entry["title"] as? String,

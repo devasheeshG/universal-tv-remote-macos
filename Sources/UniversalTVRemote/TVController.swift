@@ -1,17 +1,14 @@
 //
-//  TVController.swift
-//  Universal TV Remote for Mac
+// TVController.swift Universal TV Remote for Mac
 //
 //  The brand-agnostic core every other file plugs into:
 //
 //    DiscoveredTV   — one TV found on (or remembered from) the network
 //    RemoteKey      — every button the UI can press, in one enum
 //    TVDriver       — the small protocol each brand driver implements
-//    RemoteSession  — the ObservableObject the UI talks to; it owns a driver,
-//                     persists pairing tokens, and republishes state changes
+// RemoteSession  — the ObservableObject the UI talks to; it owns a driver, persists pairing tokens, and republishes state changes
 //
-//  Adding a sixth TV brand means: add a TVBrand case, write one driver file,
-//  and register it in RemoteSession.makeDriver(for:). Nothing else changes.
+// Adding a sixth TV brand means: add a TVBrand case, write one driver file, and register it in RemoteSession.makeDriver(for:). Nothing else changes.
 //
 
 import Foundation
@@ -51,22 +48,17 @@ enum TVBrand: String, Codable, CaseIterable {
 
 // MARK: - Discovered device
 
-/// One TV on the network. Produced by Discovery, persisted to UserDefaults so
-/// known TVs appear instantly on the next launch (before a fresh scan lands).
+/// One TV on the network. Produced by Discovery, persisted to UserDefaults so known TVs appear instantly on the next launch (before a fresh scan lands).
 struct DiscoveredTV: Identifiable, Codable, Hashable {
-    /// Stable identity across launches: "<brand>:<unique part>", where the
-    /// unique part is the Bonjour service name or SSDP USN when available,
-    /// falling back to the IP address.
+    /// Stable identity across launches: "<brand>:<unique part>", where the unique part is the Bonjour service name or SSDP USN when available, falling back to the IP address.
     let id: String
     let brand: TVBrand
     var name: String
     var host: String
-    /// Control port when the protocol needs a specific one (Roku's ECP port
-    /// comes from its SSDP LOCATION header; other brands use fixed ports).
+    /// Control port when the protocol needs a specific one (Roku's ECP port comes from its SSDP LOCATION header; other brands use fixed ports).
     var port: Int?
 
-    /// Fire TV appends a changing session and port to its Bonjour name.
-    /// Only the device component identifies the physical TV.
+    /// Fire TV appends a changing session and port to its Bonjour name. Only the device component identifies the physical TV.
     var discoveryIdentity: String {
         guard brand == .fireTV, id.hasPrefix("fireTV:amzn.dmgr:") else { return id }
         let parts = id.split(separator: ":", omittingEmptySubsequences: false)
@@ -77,8 +69,7 @@ struct DiscoveredTV: Identifiable, Codable, Hashable {
 
 // MARK: - Remote vocabulary
 
-/// Every button the remote UI can press. Each driver maps these onto its own
-/// protocol's key codes; unsupported keys are simply ignored by a driver.
+/// Every button the remote UI can press. Each driver maps these onto its own protocol's key codes; unsupported keys are simply ignored by a driver.
 enum RemoteKey {
     case power
     case up, down, left, right, ok
@@ -90,10 +81,7 @@ enum RemoteKey {
     case volumeUp, volumeDown, mute
 }
 
-/// A launchable app shown in the app-shortcut row. `id` is whatever the brand
-/// protocol wants (package name, Tizen app id, Roku channel id, deep link…).
-/// `domain` powers the icon: we fetch the service's favicon rather than
-/// bundling trademarked logos.
+/// A launchable app shown in the app-shortcut row. `id` is whatever the brand protocol wants (package name, Tizen app id, Roku channel id, deep link…). `domain` powers the icon: we fetch the service's favicon rather than bundling trademarked logos.
 struct TVApp: Identifiable, Hashable {
     let name: String
     let id: String
@@ -102,13 +90,11 @@ struct TVApp: Identifiable, Hashable {
     /// /query/icon, LG's listApps icons). Beats any lookup when present.
     var iconArt: String? = nil
 
-    /// Ordering weight so household staples lead the collapsed row; apps the
-    /// TV lists that we don't recognize keep their device order after them.
+    /// Ordering weight so household staples lead the collapsed row; apps the TV lists that we don't recognize keep their device order after them.
     static let favorites = ["Netflix", "YouTube", "Prime Video", "Disney+", "Spotify", "Max", "Hulu"]
     var favoriteRank: Int { TVApp.favorites.firstIndex(where: { name.hasPrefix($0) }) ?? Int.max }
 
-    /// Favicon lookup for names that arrive without a domain (Roku's live
-    /// channel list) — best-effort, unknown apps fall back to a letter avatar.
+    /// Favicon lookup for names that arrive without a domain (Roku's live channel list) — best-effort, unknown apps fall back to a letter avatar.
     static let knownDomains: [String: String] = [
         "Netflix": "netflix.com", "YouTube": "youtube.com",
         "Prime Video": "primevideo.com", "Disney+": "disneyplus.com",
@@ -117,8 +103,7 @@ struct TVApp: Identifiable, Hashable {
         "Twitch": "twitch.tv", "Crunchyroll": "crunchyroll.com",
     ]
 
-    /// Best icon we can point AsyncImage at without a lookup: the TV's own
-    /// art when it gave us any, else the service's favicon, else nil.
+    /// Best icon we can point AsyncImage at without a lookup: the TV's own art when it gave us any, else the service's favicon, else nil.
     var iconURL: URL? {
         if let iconArt { return URL(string: iconArt) }
         let resolved = domain ?? TVApp.knownDomains[name]
@@ -129,14 +114,11 @@ struct TVApp: Identifiable, Hashable {
 
 // MARK: - Session state
 
-/// What kind of user interaction pairing needs, so the UI can render the
-/// right prompt.
+/// What kind of user interaction pairing needs, so the UI can render the right prompt.
 enum PairingKind: Equatable {
-    /// TV shows a code the user types into our popover (Fire TV: 4 digits,
-    /// Android TV: 6 hex characters).
+    /// TV shows a code the user types into our popover (Fire TV: 4 digits, Android TV: 6 hex characters).
     case pin(digits: Int)
-    /// TV shows an Allow/Deny dialog the user accepts with the TV's own
-    /// remote (Samsung, LG). We just wait.
+    /// TV shows an Allow/Deny dialog the user accepts with the TV's own remote (Samsung, LG). We just wait.
     case onScreenAllow
 }
 
@@ -150,21 +132,16 @@ enum SessionState: Equatable {
 
 // MARK: - Driver protocol
 
-/// The contract each brand driver implements. Drivers are plain classes that
-/// do their networking on background queues and report back through the two
-/// callbacks; RemoteSession hops them onto the main thread for SwiftUI.
+/// The contract each brand driver implements. Drivers are plain classes that do their networking on background queues and report back through the two callbacks; RemoteSession hops them onto the main thread for SwiftUI.
 protocol TVDriver: AnyObject {
     /// Fired on every state transition (connecting → pairing → connected…).
     var onStateChange: ((SessionState) -> Void)? { get set }
-    /// Fired when the TV hands us a credential worth persisting (Samsung/LG
-    /// token or client-key, Fire TV token, Android TV "paired" marker).
+    /// Fired when the TV hands us a credential worth persisting (Samsung/LG token or client-key, Fire TV token, Android TV "paired" marker).
     var onTokenIssued: ((String) -> Void)? { get set }
-    /// Fired when the driver learns what's actually installed on the TV and
-    /// `apps` changed as a result (Fire TV/Roku/LG query live lists).
+    /// Fired when the driver learns what's actually installed on the TV and `apps` changed as a result (Fire TV/Roku/LG query live lists).
     var onAppsChanged: (() -> Void)? { get set }
 
-    /// Open the control channel. `token` is the previously persisted
-    /// credential, or nil on first contact (which starts pairing).
+    /// Open the control channel. `token` is the previously persisted credential, or nil on first contact (which starts pairing).
     func connect(token: String?)
     /// Deliver the PIN the user typed (only meaningful for .pin pairing).
     func submitPairingCode(_ code: String)
@@ -173,8 +150,7 @@ protocol TVDriver: AnyObject {
     func send(_ key: RemoteKey)
     func sendText(_ text: String)
     func launchApp(_ appID: String)
-    /// Brand's app shortcuts for the UI row (static list, or live-queried
-    /// in the Roku driver's case).
+    /// Brand's app shortcuts for the UI row (static list, or live-queried in the Roku driver's case).
     var apps: [TVApp] { get }
 }
 
@@ -186,8 +162,7 @@ protocol TVDriver: AnyObject {
 final class RemoteSession: ObservableObject {
     let device: DiscoveredTV
     @Published private(set) var state: SessionState = .idle
-    /// What the shortcut row shows. Starts as the driver's static catalog and
-    /// is replaced by the live installed-apps list once the driver has one.
+    /// What the shortcut row shows. Starts as the driver's static catalog and is replaced by the live installed-apps list once the driver has one.
     @Published private(set) var apps: [TVApp] = []
 
     private let driver: TVDriver
@@ -271,10 +246,7 @@ final class RemoteSession: ObservableObject {
 
 // MARK: - Shared power-on plumbing (used by Samsung + LG drivers)
 
-/// Samsung and LG TVs power ON via a Wake-on-LAN magic packet (their control
-/// server is down while off, so no protocol message can reach them). This is
-/// the classic 6×0xFF + 16×MAC UDP broadcast, sent over a raw BSD socket
-/// because Network.framework has no broadcast support.
+/// Samsung and LG TVs power ON via a Wake-on-LAN magic packet (their control server is down while off, so no protocol message can reach them). This is the classic 6×0xFF + 16×MAC UDP broadcast, sent over a raw BSD socket because Network.framework has no broadcast support.
 func sendWakeOnLAN(macAddress: String) {
     // "AA:BB:CC:DD:EE:FF" (or dashes) → [0xAA, 0xBB, ...]
     let bytes = macAddress
@@ -306,10 +278,7 @@ func sendWakeOnLAN(macAddress: String) {
     }
 }
 
-/// Read a device's MAC address out of the system ARP cache. After we have
-/// talked to a TV over TCP its MAC is guaranteed to be cached, so drivers
-/// call this right after connecting and persist the result for later
-/// Wake-on-LAN power-on. Returns nil if the IP is not in the cache.
+/// Read a device's MAC address out of the system ARP cache. After we have talked to a TV over TCP its MAC is guaranteed to be cached, so drivers call this right after connecting and persist the result for later Wake-on-LAN power-on. Returns nil if the IP is not in the cache.
 func macAddressFromARP(ip: String) -> String? {
     // `arp -n <ip>` prints: "? (192.168.1.5) at aa:bb:cc:dd:ee:ff on en0 ..."
     let process = Process()

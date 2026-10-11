@@ -1,22 +1,16 @@
 //
-//  Roku.swift
-//  Universal TV Remote for Mac
+// Roku.swift Universal TV Remote for Mac
 //
-//  Driver for Roku sticks/boxes and Roku TVs via ECP (External Control
-//  Protocol): plain HTTP on port 8060, no pairing at all.
+// Driver for Roku sticks/boxes and Roku TVs via ECP (External Control Protocol): plain HTTP on port 8060, no pairing at all.
 //
 //    Keys      POST /keypress/<Key>
 //    Text      POST /keypress/Lit_<percent-encoded character>   (one per char)
 //    Apps      GET  /query/apps      → XML list, live-queried
-//              POST /launch/<appID>
+// POST /launch/<appID>
 //    Power     POST /keypress/PowerOn | PowerOff  (Roku TVs; we read
 //              /query/device-info power-mode to pick the right one)
 //
-//  Reference: developer.roku.com ECP docs; Home Assistant `roku` integration.
-//  NOTE (untested driver): written from the official ECP documentation — the
-//  developer has no Roku hardware, so this ships untested on real devices.
-//  Roku OS 14.1+ gates ECP behind Settings → System → Advanced system
-//  settings → Control by mobile apps → Enabled; connect() surfaces that hint.
+// Reference: developer.roku.com ECP docs; Home Assistant `roku` integration. NOTE (untested driver): written from the official ECP documentation — the developer has no Roku hardware, so this ships untested on real devices. Roku OS 14.1+ gates ECP behind Settings → System → Advanced system settings → Control by mobile apps → Enabled; connect() surfaces that hint.
 //
 
 import Foundation
@@ -33,8 +27,7 @@ final class RokuDriver: TVDriver {
     private var generation = 0
     private var checkingHealth = false
     private var wasConnected = false
-    /// Filled from /query/apps on connect so the shortcut row shows what is
-    /// actually installed; starts with well-known channel ids as a fallback.
+    /// Filled from /query/apps on connect so the shortcut row shows what is actually installed; starts with well-known channel ids as a fallback.
     private var liveApps: [TVApp] = [
         TVApp(name: "Netflix", id: "12", domain: "netflix.com"),
         TVApp(name: "YouTube", id: "837", domain: "youtube.com"),
@@ -44,8 +37,7 @@ final class RokuDriver: TVDriver {
 
     init(device: DiscoveredTV) {
         self.device = device
-        // Port comes from the SSDP LOCATION header during discovery; 8060 is
-        // the documented default for every Roku.
+        // Port comes from the SSDP LOCATION header during discovery; 8060 is the documented default for every Roku.
         self.base = URL(string: "http://\(device.host):\(device.port ?? 8060)")!
     }
 
@@ -99,8 +91,7 @@ final class RokuDriver: TVDriver {
     }
 
     func send(_ key: RemoteKey) {
-        // Power is the only stateful key: ECP has separate PowerOn/PowerOff,
-        // so peek at power-mode to decide which the user means.
+        // Power is the only stateful key: ECP has separate PowerOn/PowerOff, so peek at power-mode to decide which the user means.
         if key == .power {
             let request = URLRequest(url: base.appendingPathComponent("query/device-info"), timeoutInterval: 4)
             session.dataTask(with: request) { [weak self] data, _, _ in
@@ -136,8 +127,7 @@ final class RokuDriver: TVDriver {
     }
 
     func sendText(_ text: String) {
-        // ECP types one character per request: /keypress/Lit_<char>.
-        // Requests are fired in order; ECP handles bursts fine.
+        // ECP types one character per request: /keypress/Lit_<char>. Requests are fired in order; ECP handles bursts fine.
         for char in text {
             let encoded = String(char).addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
             keypress("Lit_\(encoded)")
@@ -164,15 +154,13 @@ final class RokuDriver: TVDriver {
 
     /// GET /query/apps returns XML like:
     ///   <app id="12" type="appl" version="...">Netflix</app>
-    /// A full XML parser is overkill for that shape — a regex keeps this
-    /// driver dependency-free.
+    /// A full XML parser is overkill for that shape — a regex keeps this driver dependency-free.
     private func refreshInstalledApps() {
         let request = URLRequest(url: base.appendingPathComponent("query/apps"), timeoutInterval: 5)
         session.dataTask(with: request) { [weak self] data, _, _ in
             guard let self, let xml = String(data: data ?? Data(), encoding: .utf8) else { return }
             let pattern = #/<app id="([^"]+)"[^>]*>([^<]+)</app>/#
-            // Everything the box reports is by definition installed; the box
-            // also serves each channel's icon over ECP.
+            // Everything the box reports is by definition installed; the box also serves each channel's icon over ECP.
             let found = xml.matches(of: pattern).map {
                 TVApp(name: String($0.2), id: String($0.1),
                       iconArt: self.base.appendingPathComponent("query/icon/\($0.1)").absoluteString)

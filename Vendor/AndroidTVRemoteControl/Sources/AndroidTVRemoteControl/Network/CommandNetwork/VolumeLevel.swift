@@ -7,10 +7,7 @@
 
 import Foundation
 
-// incoming data format: [data_length, 146, 3, sub_length, 8, <unknown>, <unknown>(optional), 16, <sub_length|unknown>, 26, model_name_length, model_name_string, 32, <unknown|0/1/2>, 40, unknown, 48, max_volume_level, 56, current_volume_level, 64, unknown]
-// Fields after '32, <unknown|0/1/2>' is otional
-// example [27, 146, 3, 24, 8, 2, 16, 2, 26, 8, 65, 105, 80, 108, 117, 115, 50, 75, 32, 2, 40, 0, 48, 100, 56, 74, 64, 0]
-// example [23, 146, 3, 20, 8, 50, 16, 9, 26, 12, 78, 101, 120, 117, 115, 32, 80, 108, 97, 121, 101, 114, 32, 0]
+// incoming data format: [data_length, 146, 3, sub_length, 8, <unknown>, <unknown>(optional), 16, <sub_length|unknown>, 26, model_name_length, model_name_string, 32, <unknown|0/1/2>, 40, unknown, 48, max_volume_level, 56, current_volume_level, 64, unknown] Fields after '32, <unknown|0/1/2>' is otional example [27, 146, 3, 24, 8, 2, 16, 2, 26, 8, 65, 105, 80, 108, 117, 115, 50, 75, 32, 2, 40, 0, 48, 100, 56, 74, 64, 0] example [23, 146, 3, 20, 8, 50, 16, 9, 26, 12, 78, 101, 120, 117, 115, 32, 80, 108, 97, 121, 101, 114, 32, 0]
 struct VolumeLevel {
     var unknown1: UInt8
     var unknown2: UInt8

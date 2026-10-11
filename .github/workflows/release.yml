@@ -1,6 +1,4 @@
-# CI/CD: every push to main builds the app on a macOS runner and publishes a
-# GitHub Release with a DMG containing the .app. Version and release notes
-# are checked in: update VERSION and .docs/releases/v<version>.md together.
+# CI/CD: every push to main builds the app on a macOS runner and publishes a GitHub Release with a DMG containing the .app. Version and release notes are checked in: update VERSION and .docs/releases/v<version>.md together.
 #
 name: Build & Release
 
