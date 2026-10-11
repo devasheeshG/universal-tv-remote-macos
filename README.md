@@ -6,11 +6,16 @@ TV on your local network.
 
 ## Screenshots
 
-Connected remote and disconnected state, captured from the actual SwiftUI
-views using an offline demo device. Demo app tiles use letter placeholders.
+Connected, pairing, expanded apps on a shorter screen, and disconnected
+states, captured from the actual SwiftUI views using an offline demo device.
+Demo app tiles use letter placeholders.
 
 <p>
   <img src="docs/screenshots/remote-connected.png" alt="Connected remote with power, direction pad, media controls, volume, text input and app shortcuts" width="272" />
+  <img src="docs/screenshots/remote-pairing.png" alt="Pairing card with a centered four-digit PIN field" width="272" />
+</p>
+<p>
+  <img src="docs/screenshots/remote-expanded-compact.png" alt="Expanded apps with the header visible and scrollable content on a shorter screen" width="272" />
   <img src="docs/screenshots/remote-disconnected.png" alt="Disconnected Fire TV with a Reconnect button" width="272" />
 </p>
 
@@ -50,7 +55,9 @@ views using an offline demo device. Demo app tiles use letter placeholders.
   or add one manually by IP address or hostname.
 - **Launch at Login:** enable it from the settings menu.
 - Compact dark SwiftUI popover with immediate button presses and a pinned
-  top edge when the app list expands. No cloud account or ADB required.
+  header when the app list expands. The panel fits its screen, scrolls long
+  content, and shrinks to a centered pairing card during re-pairing. No cloud
+  account or ADB required.
 
 ## Install
 

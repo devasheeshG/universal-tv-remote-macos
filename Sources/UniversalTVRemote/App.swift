@@ -84,6 +84,8 @@ final class AppState: ObservableObject {
         self.defaults = defaults
         self.makeSession = makeSession ?? { RemoteSession(device: $0, defaults: defaults) }
         self.session = initialSession
+        sessionForwarder = initialSession?.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
         // Forward the discovery engine's changes (new devices, renames) so
         // views observing AppState re-render.
         discoveryForwarder = discovery.objectWillChange
@@ -186,6 +188,7 @@ struct RemoteView: View {
     @State private var pinInput = ""
     @State private var textInput = ""
     @FocusState private var typingFocused: Bool
+    @FocusState private var pairingFocused: Bool
     // Manual "Add TV by IP" form state (shown in place of the status area).
     @State private var addingManually = false
     @State private var manualBrand: TVBrand = .fireTV
@@ -195,10 +198,61 @@ struct RemoteView: View {
     // Inline "Rename this TV" form state.
     @State private var renaming = false
     @State private var renameInput = ""
+    @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
+    private let previewHeight: CGFloat?
+
+    init(appsExpanded: Bool = false, availableHeight: CGFloat? = nil) {
+        _appsExpanded = .init(initialValue: appsExpanded)
+        previewHeight = availableHeight
+    }
+
+    private var maximumBodyHeight: CGFloat {
+        max(180, (previewHeight ?? screenHeight) - 100)
+    }
 
     var body: some View {
         VStack(spacing: 14) {
             header
+            ViewThatFits(in: .vertical) {
+                bodyContent.fixedSize(horizontal: false, vertical: true)
+                ScrollView(.vertical) {
+                    bodyContent
+                }
+                .scrollIndicators(.never)
+                .frame(height: maximumBodyHeight)
+            }
+            .frame(maxHeight: maximumBodyHeight)
+        }
+        .padding(16)
+        .frame(width: 272)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .background(GeometryReader { geometry in
+            WindowTopPin(contentSize: geometry.size) {
+                if abs(screenHeight - $0) > 0.5 { screenHeight = $0 }
+            }
+        })
+        .preferredColorScheme(.dark)
+        .environment(\.offlinePreview, !state.startsDiscovery)
+        .onAppear {
+            if case .awaitingPairing(.pin) = state.session?.state { pairingFocused = true }
+            guard state.startsDiscovery else { return }
+            state.discovery.scan()
+            state.installKeyMonitors()
+        }
+        .onDisappear { state.removeKeyMonitors() }
+        .onChange(of: typingFocused) { _, focused in state.textFieldFocused = focused || pairingFocused }
+        .onChange(of: pairingFocused) { _, focused in state.textFieldFocused = focused || typingFocused }
+        .onChange(of: state.session?.state) { _, newState in
+            pinInput = ""
+            if case .awaitingPairing(.pin) = newState { pairingFocused = true }
+            else { pairingFocused = false }
+        }
+    }
+
+    private var bodyContent: some View {
+        VStack(spacing: 14) {
             if addingManually {
                 addTVForm
             } else if renaming {
@@ -215,19 +269,6 @@ struct RemoteView: View {
                 emptyState
             }
         }
-        .padding(16)
-        .frame(width: 272)
-        .background(.ultraThinMaterial)
-        .background(WindowTopPin())
-        .preferredColorScheme(.dark)
-        .environment(\.offlinePreview, !state.startsDiscovery)
-        .onAppear {
-            guard state.startsDiscovery else { return }
-            state.discovery.scan()
-            state.installKeyMonitors()
-        }
-        .onDisappear { state.removeKeyMonitors() }
-        .onChange(of: typingFocused) { _, focused in state.textFieldFocused = focused }
     }
 
     // MARK: header — power · device picker · refresh · settings
@@ -373,22 +414,45 @@ struct RemoteView: View {
                     .foregroundStyle(.secondary)
             }
         case .awaitingPairing(.pin(let digits)):
-            VStack(spacing: 8) {
-                Text("Enter the \(digits)-character code\nshown on your TV")
+            VStack(spacing: 14) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.blue)
+                VStack(spacing: 5) {
+                    Text("Pair your TV")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Enter the \(digits)-\(digits == 4 ? "digit PIN" : "character code") shown on your TV.")
                     .font(.caption)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
-                HStack {
-                    TextField("Code", text: $pinInput)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 110)
-                        .onSubmit(submitPIN)
-                    Button("Pair", action: submitPIN)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(pinInput.count < digits)
                 }
+                TextField(digits == 4 ? "0000" : "000000", text: $pinInput)
+                        .font(.system(size: 24, weight: .medium, design: .monospaced))
+                        .multilineTextAlignment(.center)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(.black.opacity(0.2)))
+                        .overlay(RoundedRectangle(cornerRadius: 10)
+                            .stroke(pairingFocused ? Color.blue : Color.white.opacity(0.12), lineWidth: pairingFocused ? 2 : 1))
+                        .focused($pairingFocused)
+                        .onSubmit(submitPIN)
+                        .onChange(of: pinInput) { _, value in
+                            pinInput = String(value.uppercased().filter {
+                                digits == 4 ? $0.isASCII && $0.isNumber : $0.isHexDigit
+                            }.prefix(digits))
+                        }
+                    Button(action: submitPIN) {
+                        Text("Pair").frame(maxWidth: .infinity)
+                    }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity)
+                        .disabled(pinInput.count != digits)
             }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 14).fill(.white.opacity(0.05)))
         }
     }
 
@@ -457,7 +521,8 @@ struct RemoteView: View {
     }
 
     private func submitPIN() {
-        guard !pinInput.isEmpty else { return }
+        guard case .awaitingPairing(.pin(let digits)) = state.session?.state,
+              pinInput.count == digits else { return }
         state.session?.submitPairingCode(pinInput.trimmingCharacters(in: .whitespaces))
         pinInput = ""
     }
@@ -526,9 +591,9 @@ struct RemoteView: View {
             VStack(spacing: 8) {
                 if !appsExpanded {
                     // Collapsed: just the top few, icon-only.
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         ForEach(session.apps.prefix(5)) { app in
-                            AppIconButton(app: app, size: 36, showName: false) {
+                            AppIconButton(app: app, size: 32, showName: false) {
                                 session.launchApp(app.id)
                             }
                         }
@@ -810,7 +875,9 @@ struct AppIconButton: View {
                 if showName {
                     Text(app.name)
                         .font(.caption2)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(height: 28, alignment: .top)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -834,54 +901,66 @@ struct AppIconButton: View {
     }
 }
 
-/// Keeps the popover's TOP edge fixed while its height changes.
-///
-/// macOS windows are anchored at their bottom-left corner, and the
-/// MenuBarExtra panel resizes whenever SwiftUI content height changes
-/// (connect status appearing, app icons loading, the grid expanding…).
-/// Bottom anchored + taller = the window grows UPWARD, sliding under the
-/// menu bar and off the screen. This invisible helper grabs the hosting
-/// NSWindow, remembers where its top edge belongs (clamped to the screen's
-/// usable area), and re-anchors it after every resize.
+/// Resize to the measured SwiftUI content, then keep the top under the menu bar.
+/// Coalescing updates avoids changing the frame inside AppKit's resize notification.
 struct WindowTopPin: NSViewRepresentable {
+    let contentSize: CGSize
+    var onScreenHeight: ((CGFloat) -> Void)? = nil
+
+    final class AnchorView: NSView {
+        var attached: ((NSWindow) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { attached?(window) }
+        }
+    }
+
     final class Coordinator {
-        var observer: NSObjectProtocol?
+        var desiredSize: CGSize = .zero
         var topEdge: CGFloat?
-        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+        var pending = false
+        var onScreenHeight: ((CGFloat) -> Void)?
+
+        func synchronize(_ window: NSWindow) {
+            guard !pending else { return }
+            pending = true
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self else { return }
+                self.pending = false
+                guard let window, self.desiredSize.width > 0, self.desiredSize.height > 0 else { return }
+                let screenTop = (window.screen ?? NSScreen.main)?.visibleFrame.maxY ?? window.frame.maxY
+                if let height = (window.screen ?? NSScreen.main)?.visibleFrame.height {
+                    self.onScreenHeight?(height)
+                }
+                let top = min(self.topEdge ?? window.frame.maxY, screenTop)
+                self.topEdge = top
+                let size = window.contentView?.bounds.size ?? .zero
+                if abs(size.width - self.desiredSize.width) > 0.5 || abs(size.height - self.desiredSize.height) > 0.5 {
+                    window.setContentSize(self.desiredSize)
+                }
+                if abs(window.frame.maxY - top) > 0.5 {
+                    window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+                }
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        // The window isn't attached until after view installation.
-        DispatchQueue.main.async {
-            guard let window = view.window, context.coordinator.observer == nil else { return }
-            let coordinator = context.coordinator
-
-            // Snap the top edge back to (at most) the screen's usable top and
-            // hold it there. Runs once at attach — the panel is reused across
-            // opens and may still carry a displaced frame from last time —
-            // and again after every content resize.
-            func anchor() {
-                let screenTop = (window.screen ?? NSScreen.main)?.visibleFrame.maxY ?? .infinity
-                let top = min(coordinator.topEdge ?? window.frame.maxY, screenTop)
-                coordinator.topEdge = top
-                var frame = window.frame
-                guard abs(frame.maxY - top) > 0.5 else { return }
-                frame.origin.y = top - frame.height
-                window.setFrame(frame, display: true)
-            }
-
-            anchor()
-            coordinator.observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didResizeNotification, object: window, queue: .main
-            ) { _ in anchor() }
-        }
+    func makeNSView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        let coordinator = context.coordinator
+        coordinator.desiredSize = contentSize
+        coordinator.onScreenHeight = onScreenHeight
+        view.attached = { [weak coordinator] window in coordinator?.synchronize(window) }
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ view: AnchorView, context: Context) {
+        context.coordinator.desiredSize = contentSize
+        context.coordinator.onScreenHeight = onScreenHeight
+        if let window = view.window { context.coordinator.synchronize(window) }
+    }
 }
 
 /// Scales the button down slightly while pressed — cheap tactile feedback.
