@@ -28,6 +28,14 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// Everything we know about: remembered devices merged with live finds.
     @Published private(set) var devices: [DiscoveredTV] = []
     @Published private(set) var isScanning = false
+    @Published private(set) var availableDeviceIDs: Set<String> = []
+
+    var availableDevices: [DiscoveredTV] { devices.filter { availableDeviceIDs.contains($0.id) } }
+    var savedDevices: [DiscoveredTV] { devices.filter { !availableDeviceIDs.contains($0.id) } }
+    private var bonjourServices: [String: String] = [:]
+    private var announcedServices: Set<String> = []
+    private var lastSeen: [String: Date] = [:]
+    private var refreshTimer: Timer?
 
     private var browsers: [NWBrowser] = []
     private let ssdpQueue = DispatchQueue(label: "ssdp.scan", qos: .utility)
@@ -54,10 +62,18 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         startBonjourBrowser(serviceType: "_androidtvremote2._tcp", brand: .androidTV)
         startBonjourBrowser(serviceType: "_amzn-wplay._tcp", brand: .fireTV)
         scan()
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshAvailability()
+            self?.scan()
+        }
     }
 
     /// Local-only migration; never starts discovery or contacts a TV.
     func loadRememberedDevices() {
+        lastSeen = [:]
+        bonjourServices = [:]
+        refreshAvailability()
         aliases = defaults.dictionary(forKey: "discoveryAliases") as? [String: String] ?? [:]
         customNames = (defaults.dictionary(forKey: DiscoveryEngine.customNamesKey)
                        as? [String: String]) ?? [:]
@@ -73,7 +89,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
                 }
                 return rank($0) < rank($1)
             }
-            for device in ordered { upsert(device) }
+            for device in ordered { upsert(device, discovered: false) }
         }
     }
 
@@ -90,6 +106,9 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// Drop a TV from the remembered list (Settings → Forget).
     func forget(_ device: DiscoveredTV) {
         devices.removeAll { $0.id == device.id }
+        lastSeen[device.id] = nil
+        bonjourServices = bonjourServices.filter { $0.value != device.id }
+        refreshAvailability()
         customNames[device.id] = nil
         defaults.set(customNames, forKey: DiscoveryEngine.customNamesKey)
         persist()
@@ -128,6 +147,21 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             for: .bonjourWithTXTRecord(type: serviceType, domain: nil),
             using: NWParameters())
         browser.browseResultsChangedHandler = { [weak self] results, _ in
+            guard let self else { return }
+            let prefix = brand.rawValue + ":"
+            let announced = Set(results.compactMap { result -> String? in
+                guard case .service(let name, _, _, _) = result.endpoint else { return nil }
+                return prefix + name
+            })
+            self.announcedServices = self.announcedServices.filter { !$0.hasPrefix(prefix) }.union(announced)
+            self.bonjourServices = self.bonjourServices.filter { !$0.key.hasPrefix(prefix) || announced.contains($0.key) }
+            for rawID in announced {
+                let identity = DiscoveredTV(id: rawID, brand: brand, name: "", host: "").discoveryIdentity
+                if let known = self.devices.first(where: { $0.id == identity || $0.id == self.aliases[identity] }) {
+                    self.bonjourServices[rawID] = known.id
+                }
+            }
+            self.refreshAvailability()
             for result in results {
                 guard case .service(let name, _, _, _) = result.endpoint else { continue }
                 // TXT records sometimes carry a friendlier name than the mDNS
@@ -140,7 +174,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
                 if brand == .fireTV, friendly.hasPrefix("amzn.dmgr") {
                     friendly = "Fire TV"
                 }
-                self?.resolveAndUpsert(endpoint: result.endpoint, serviceName: name,
+                self.resolveAndUpsert(endpoint: result.endpoint, serviceName: name,
                                        displayName: friendly, brand: brand)
             }
         }
@@ -183,7 +217,11 @@ final class DiscoveryEngine: NSObject, ObservableObject {
                     id: "\(brand.rawValue):\(serviceName)",
                     brand: brand, name: displayName, host: ip, port: nil)
                 NSLog("[discovery] resolved \(displayName) (\(brand.rawValue)) → \(ip)")
-                self?.upsert(device)
+                if let self, self.announcedServices.contains(device.id) {
+                    let merged = self.upsert(device, discovered: false)
+                    self.bonjourServices[device.id] = merged.id
+                    self.refreshAvailability()
+                }
             }
             connection.cancel()
         }
@@ -364,7 +402,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// Insert or refresh one device, keeping any better name we already had,
     /// and persist so the list survives restarts.
     @discardableResult
-    func upsert(_ incoming: DiscoveredTV) -> DiscoveredTV {
+    func upsert(_ incoming: DiscoveredTV, discovered: Bool = true) -> DiscoveredTV {
         let device = DiscoveredTV(id: incoming.discoveryIdentity, brand: incoming.brand,
                                   name: incoming.name, host: incoming.host, port: incoming.port)
         let index = devices.firstIndex {
@@ -404,7 +442,17 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             devices.sort { $0.name < $1.name }
         }
         persist()
+        if discovered { lastSeen[retainedID] = Date() }
+        refreshAvailability()
         return devices.first { $0.id == retainedID }!
+    }
+
+    /// Discovery availability is separate from remote-service connectivity.
+    /// Saved devices never become live merely because preferences were loaded.
+    func refreshAvailability(now: Date = Date()) {
+        lastSeen = lastSeen.filter { now.timeIntervalSince($0.value) < 45 }
+        let current = Set(bonjourServices.values).union(lastSeen.keys)
+        if current != availableDeviceIDs { availableDeviceIDs = current }
     }
 
     private func persist() {

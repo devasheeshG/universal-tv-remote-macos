@@ -20,7 +20,10 @@ views using an offline demo device. Demo app tiles use letter placeholders.
   your local network. Known devices appear immediately at startup. Fire TV
   service changes and multiple discovery protocols merge into one entry;
   existing duplicates are cleaned up while keeping pairing credentials,
-  custom names, and the selected TV.
+  custom names, and the selected TV. The picker separates **Discovered on
+  this network** from **Saved · not currently discovered**, so remembered
+  devices are not presented as current discoveries. Discovery refreshes
+  periodically; SSDP sightings expire after 45 seconds without a new reply.
 - **Automatic connection:** restores the last selected, already paired TV
   at launch and follows discovery updates when its IP address changes.
   A single paired TV can be selected automatically. New TVs require an
@@ -70,13 +73,20 @@ Roku does not require pairing. Credentials are remembered for later use.
 “Connected” means the TV's **remote service** is reachable, rather than a
 measurement of the display's power state. A separately powered Fire TV
 Stick can remain reachable when its attached television is off. Fire TV
-and Roku status changes normally appear within about five seconds of a
-service becoming unreachable, subject to system sleep and network delays.
+and Roku status changes normally appear within a few seconds of a service
+becoming unreachable, subject to system sleep and network delays. Fire TV
+can take up to about seven seconds when a failed remote check is followed
+by the read-only DIAL service check.
 
 Automatic connection, monitoring, and Fire TV reconnection do **not** send
 wake commands. Use the power button explicitly to wake or sleep the TV.
 An unavailable TV stays disconnected with a **Reconnect** button. A revoked
 Fire TV token requires **Settings → Re-pair**.
+
+If a Fire TV is on but cannot connect, the app reads its DIAL service status.
+When `FireTVRemote` is stopped, it explains that the remote service needs
+to be started. The power button explicitly starts/wakes that service;
+background checks and **Reconnect** never start it automatically.
 
 ## Per-brand notes
 

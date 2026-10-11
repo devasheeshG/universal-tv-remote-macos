@@ -36,7 +36,7 @@ struct ScreenshotTests {
         let state = AppState(discovery: discovery, initialSession: session, startsDiscovery: false, defaults: defaults)
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         for (filename, status) in [("remote-connected.png", SessionState.connected),
-                                   ("remote-disconnected.png", .failed("Disconnected — Fire TV is asleep or unreachable"))] {
+                                   ("remote-disconnected.png", .failed("Disconnected — Fire TV remote service is unavailable"))] {
             driver.nextState = status
             session.connect()
             await Task.yield()

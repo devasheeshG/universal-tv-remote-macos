@@ -156,7 +156,29 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
                     if !wasReachable { self.fetchInstalledApps() }
                 } else {
                     self.isReachable = false
-                    self.onStateChange?(.failed("Disconnected — Fire TV is asleep or unreachable"))
+                    self.explainUnavailable(generation: currentGeneration)
+                }
+            }
+        }
+        healthTask?.resume()
+    }
+
+    /// A powered-on Fire TV can have its remote app stopped. DIAL exposes
+    /// that state through GET; checking it must never launch the app.
+    private func explainUnavailable(generation currentGeneration: Int) {
+        let request = URLRequest(url: URL(string: "http://\(device.host):8009/apps/FireTVRemote")!,
+                                 cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+        healthTask = session.dataTask(with: request) { [weak self] data, response, _ in
+            DispatchQueue.main.async {
+                guard let self, self.generation == currentGeneration else { return }
+                self.healthTask = nil
+                let xml = String(data: data ?? Data(), encoding: .utf8) ?? ""
+                if (response as? HTTPURLResponse)?.statusCode == 200,
+                   xml.contains("<state>stopped</state>") {
+                    self.onStateChange?(.failed("Fire TV is online, but its remote service is stopped. "
+                        + "Use the power button to start it, then reconnect."))
+                } else {
+                    self.onStateChange?(.failed("Disconnected — Fire TV remote service is unavailable"))
                 }
             }
         }

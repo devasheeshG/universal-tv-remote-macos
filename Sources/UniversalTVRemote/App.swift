@@ -264,31 +264,39 @@ struct RemoteView: View {
             if state.discovery.devices.isEmpty {
                 Text("No TVs found yet")
             }
-            ForEach(state.discovery.devices) { device in
-                Button {
-                    state.select(device)
-                } label: {
-                    Label("\(state.discovery.displayName(for: device))  ·  \(device.brand.displayName)",
-                          systemImage: device.brand.symbolName)
+            if !state.discovery.availableDevices.isEmpty {
+                Section("Discovered on this network") {
+                    ForEach(state.discovery.availableDevices) { device in
+                        deviceMenuItem(device)
+                    }
+                }
+            }
+            if !state.discovery.savedDevices.isEmpty {
+                Section("Saved · not currently discovered") {
+                    ForEach(state.discovery.savedDevices) { device in
+                        deviceMenuItem(device)
+                    }
                 }
             }
             Divider()
             Button("Add TV by IP…") { addingManually = true }
         } label: {
-            // borderlessButton menus draw their own disclosure chevron.
-            // No .fixedSize() here — it would force the label to its full
-            // text width and shove the power button and gear off the popover.
             Text(state.session.map(displayName) ?? "Choose a TV")
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                // FIXED width (not maxWidth) directly on the label: proposes
-                // exactly this width to the Text so it always truncates,
-                // regardless of how the Menu propagates layout. Leaves room
-                // for the power button, refresh, and gear in the 272 pt row.
                 .frame(width: 132, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
+    }
+
+    private func deviceMenuItem(_ device: DiscoveredTV) -> some View {
+        Button {
+            state.select(device)
+        } label: {
+            Label("\(state.discovery.displayName(for: device))  ·  \(device.brand.displayName)",
+                  systemImage: device.brand.symbolName)
+        }
     }
 
     /// The name to show for a session's TV: the user's custom nickname if set,

@@ -4,6 +4,24 @@ import Foundation
 
 struct DiscoveryTests {
     @Test
+    func testRememberedDevicesStaySeparateFromLiveDiscoveryAndExpire() throws {
+        let suite = "DiscoveryTests.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let tv = DiscoveredTV(id: "fireTV:demo", brand: .fireTV, name: "TV", host: "192.0.2.1")
+        defaults.set(try JSONEncoder().encode([tv]), forKey: "rememberedDevices")
+        let discovery = DiscoveryEngine(defaults: defaults)
+        discovery.loadRememberedDevices()
+        #expect(discovery.availableDevices.isEmpty)
+        #expect(discovery.savedDevices == [tv])
+        discovery.upsert(tv)
+        #expect(discovery.availableDevices == [tv])
+        #expect(discovery.savedDevices.isEmpty)
+        discovery.refreshAvailability(now: Date().addingTimeInterval(46))
+        #expect(discovery.availableDevices.isEmpty)
+        #expect(discovery.savedDevices == [tv])
+    }
+    @Test
     func testLegacyDuplicatesPreserveSelectionPairingAndNickname() throws {
         let suite = "DiscoveryTests.\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!
