@@ -185,6 +185,21 @@ struct UniversalTVRemoteApp: App {
 
 enum RemotePanel { case remote, devices, settings }
 
+/// Expansion changes both SwiftUI content and the AppKit panel's size.
+/// Apply it as one transaction so intermediate transition layouts cannot
+/// briefly shrink the entire remote before the grid is inserted.
+final class AppListExpansion: ObservableObject {
+    @Published private(set) var isExpanded: Bool
+
+    init(isExpanded: Bool = false) { self.isExpanded = isExpanded }
+
+    func toggle() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { isExpanded.toggle() }
+    }
+}
+
 struct RemoteView: View {
     @EnvironmentObject private var state: AppState
     @State private var pinInput = ""
@@ -196,7 +211,7 @@ struct RemoteView: View {
     @State private var manualBrand: TVBrand = .fireTV
     @State private var manualIP = ""
     /// Whether the app row shows the full catalog or just the top few.
-    @State private var appsExpanded = false
+    @StateObject private var appListExpansion: AppListExpansion
     // Inline "Rename this TV" form state.
     @State private var renaming = false
     @State private var renameInput = ""
@@ -204,8 +219,9 @@ struct RemoteView: View {
     private let previewHeight: CGFloat?
     @State private var panel: RemotePanel = .remote
 
-    init(appsExpanded: Bool = false, availableHeight: CGFloat? = nil, panel: RemotePanel = .remote) {
-        _appsExpanded = .init(initialValue: appsExpanded)
+    init(appsExpanded: Bool = false, availableHeight: CGFloat? = nil, panel: RemotePanel = .remote,
+         appListExpansion: AppListExpansion? = nil) {
+        _appListExpansion = .init(wrappedValue: appListExpansion ?? AppListExpansion(isExpanded: appsExpanded))
         _panel = .init(initialValue: panel)
         previewHeight = availableHeight
     }
@@ -668,7 +684,7 @@ struct RemoteView: View {
     private var appShortcuts: some View {
         if let session = state.session, !session.apps.isEmpty {
             VStack(spacing: 8) {
-                if !appsExpanded {
+                if !appListExpansion.isExpanded {
                     // Collapsed: just the top few, icon-only.
                     HStack(spacing: 8) {
                         ForEach(session.apps.prefix(5)) { app in
@@ -709,16 +725,16 @@ struct RemoteView: View {
 
     private var expandToggle: some View {
         Button {
-            withAnimation(.easeOut(duration: 0.15)) { appsExpanded.toggle() }
+            appListExpansion.toggle()
         } label: {
-            Image(systemName: appsExpanded ? "chevron.up" : "chevron.down")
+            Image(systemName: appListExpansion.isExpanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 24)
                 .background(Circle().fill(.white.opacity(0.08)))
         }
         .buttonStyle(.plain)
-        .help(appsExpanded ? "Show fewer apps" : "Show all apps")
+        .help(appListExpansion.isExpanded ? "Show fewer apps" : "Show all apps")
     }
 
     private func send(_ key: RemoteKey) { state.session?.send(key) }

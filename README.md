@@ -68,6 +68,8 @@ Demo app tiles use letter placeholders.
   header when the app list expands. The panel fits its screen, scrolls long
   content, and shrinks to a centered pairing card during re-pairing. No cloud
   account or ADB required.
+  App expansion updates the panel directly without a layout animation that
+  briefly collapses the remote.
 
 ## Install
 

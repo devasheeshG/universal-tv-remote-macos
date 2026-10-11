@@ -21,6 +21,53 @@ private final class ScreenshotDriver: TVDriver {
 
 struct ScreenshotTests {
     @Test @MainActor
+    func testAppExpansionDoesNotTemporarilyCollapseThePanel() async throws {
+        let suite = "ExpansionTests.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let device = DiscoveredTV(id: "fireTV:demo", brand: .fireTV, name: "Living Room", host: "192.0.2.1")
+        let driver = ScreenshotDriver()
+        let session = RemoteSession(device: device, driver: driver, defaults: defaults)
+        let state = AppState(discovery: DiscoveryEngine(defaults: defaults), initialSession: session,
+                             startsDiscovery: false, defaults: defaults)
+        session.connect()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let expansion = AppListExpansion()
+        let hosting = NSHostingView(rootView: RemoteView(availableHeight: 620, appListExpansion: expansion)
+            .environmentObject(state))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 272, height: 600),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = hosting
+        defer { window.contentView = nil; session.disconnect() }
+        hosting.layoutSubtreeIfNeeded()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let collapsedHeight = window.contentView!.bounds.height
+        let top = window.frame.maxY
+        #expect(collapsedHeight > 400)
+
+        expansion.toggle()
+        var expansionHeights: [CGFloat] = []
+        for _ in 0..<20 {
+            hosting.layoutSubtreeIfNeeded()
+            expansionHeights.append(window.contentView!.bounds.height)
+            #expect(abs(window.frame.maxY - top) < 1)
+            try await Task.sleep(nanoseconds: 16_000_000)
+        }
+        let expandedHeight = window.contentView!.bounds.height
+        #expect(expandedHeight > collapsedHeight)
+        #expect(expansionHeights.allSatisfy { $0 >= collapsedHeight - 1 && $0 <= expandedHeight + 1 })
+
+        expansion.toggle()
+        for _ in 0..<20 {
+            hosting.layoutSubtreeIfNeeded()
+            #expect(window.contentView!.bounds.height >= collapsedHeight - 1)
+            #expect(abs(window.frame.maxY - top) < 1)
+            try await Task.sleep(nanoseconds: 16_000_000)
+        }
+        #expect(abs(window.contentView!.bounds.height - collapsedHeight) < 1)
+    }
+
+    @Test @MainActor
     func testCaptureOfflineAppScreenshots() async throws {
         let directory = ProcessInfo.processInfo.environment["README_SCREENSHOTS"]
         let suite = "ScreenshotTests.\(UUID())"
