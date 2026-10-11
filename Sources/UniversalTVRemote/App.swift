@@ -183,6 +183,8 @@ struct UniversalTVRemoteApp: App {
 
 // MARK: - The remote
 
+enum RemotePanel { case remote, devices, settings }
+
 struct RemoteView: View {
     @EnvironmentObject private var state: AppState
     @State private var pinInput = ""
@@ -200,14 +202,20 @@ struct RemoteView: View {
     @State private var renameInput = ""
     @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
     private let previewHeight: CGFloat?
+    @State private var panel: RemotePanel = .remote
 
-    init(appsExpanded: Bool = false, availableHeight: CGFloat? = nil) {
+    init(appsExpanded: Bool = false, availableHeight: CGFloat? = nil, panel: RemotePanel = .remote) {
         _appsExpanded = .init(initialValue: appsExpanded)
+        _panel = .init(initialValue: panel)
         previewHeight = availableHeight
     }
 
     private var maximumBodyHeight: CGFloat {
         max(180, (previewHeight ?? screenHeight) - 100)
+    }
+
+    private var capturesTextInput: Bool {
+        panel != .remote || addingManually || renaming || typingFocused || pairingFocused
     }
 
     var body: some View {
@@ -237,13 +245,13 @@ struct RemoteView: View {
         .environment(\.offlinePreview, !state.startsDiscovery)
         .onAppear {
             if case .awaitingPairing(.pin) = state.session?.state { pairingFocused = true }
+            state.textFieldFocused = capturesTextInput
             guard state.startsDiscovery else { return }
             state.discovery.scan()
             state.installKeyMonitors()
         }
-        .onDisappear { state.removeKeyMonitors() }
-        .onChange(of: typingFocused) { _, focused in state.textFieldFocused = focused || pairingFocused }
-        .onChange(of: pairingFocused) { _, focused in state.textFieldFocused = focused || typingFocused }
+        .onDisappear { state.removeKeyMonitors(); state.textFieldFocused = false }
+        .onChange(of: capturesTextInput) { _, focused in state.textFieldFocused = focused }
         .onChange(of: state.session?.state) { _, newState in
             pinInput = ""
             if case .awaitingPairing(.pin) = newState { pairingFocused = true }
@@ -257,16 +265,20 @@ struct RemoteView: View {
                 addTVForm
             } else if renaming {
                 renameForm
+            } else if panel == .devices {
+                deviceList
+            } else if panel == .settings {
+                settingsPanel
             } else {
                 statusSection
-            }
-            if case .connected = state.session?.state {
-                dpad
-                controlRows
-                keyboardField
-                appShortcuts
-            } else if state.session == nil {
-                emptyState
+                if case .connected = state.session?.state {
+                    dpad
+                    controlRows
+                    keyboardField
+                    appShortcuts
+                } else if state.session == nil {
+                    emptyState
+                }
             }
         }
     }
@@ -296,48 +308,97 @@ struct RemoteView: View {
             .foregroundStyle(.secondary)
             .help("Scan the network again")
 
-            settingsMenu
+            Button {
+                addingManually = false
+                renaming = false
+                panel = panel == .settings ? .remote : .settings
+            } label: {
+                Image(systemName: "gearshape")
+                    .foregroundStyle(panel == .settings ? Color.blue : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Settings")
         }
     }
 
     private var devicePicker: some View {
-        Menu {
+        Button {
+            addingManually = false
+            renaming = false
+            panel = panel == .devices ? .remote : .devices
+        } label: {
+            HStack(spacing: 4) {
+                Text(state.session.map(displayName) ?? "Choose a TV")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+                Image(systemName: panel == .devices ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .frame(width: 132, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func panelHeading(_ title: String) -> some View {
+        HStack(spacing: 10) {
+            Button { panel = .remote } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.plain)
+            .help("Back to remote")
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Spacer()
+        }
+    }
+
+    private var deviceList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            panelHeading("Your TVs")
             if state.discovery.devices.isEmpty {
-                Text("No TVs found yet")
+                Text("No TVs found yet").font(.caption).foregroundStyle(.secondary)
             }
             if !state.discovery.availableDevices.isEmpty {
-                Section("Discovered on this network") {
+                Text("Discovered on this network").font(.caption).foregroundStyle(.secondary)
                     ForEach(state.discovery.availableDevices) { device in
                         deviceMenuItem(device)
                     }
-                }
             }
             if !state.discovery.savedDevices.isEmpty {
-                Section("Saved · not currently discovered") {
+                Text("Saved · not currently discovered").font(.caption).foregroundStyle(.secondary)
                     ForEach(state.discovery.savedDevices) { device in
                         deviceMenuItem(device)
                     }
-                }
             }
             Divider()
             Button("Add TV by IP…") { addingManually = true }
-        } label: {
-            Text(state.session.map(displayName) ?? "Choose a TV")
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: 132, alignment: .leading)
+                .buttonStyle(.bordered)
         }
-        .menuStyle(.borderlessButton)
     }
 
     private func deviceMenuItem(_ device: DiscoveredTV) -> some View {
         Button {
             state.select(device)
+            panel = .remote
         } label: {
-            Label("\(state.discovery.displayName(for: device))  ·  \(device.brand.displayName)",
-                  systemImage: device.brand.symbolName)
+            HStack(spacing: 10) {
+                Image(systemName: device.brand.symbolName).frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(state.discovery.displayName(for: device))
+                        .font(.system(size: 12, weight: .medium)).lineLimit(2)
+                    Text(device.brand.displayName).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if state.session?.device.id == device.id {
+                    Image(systemName: "checkmark").foregroundStyle(.blue)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.05)))
         }
+        .buttonStyle(.plain)
     }
 
     /// The name to show for a session's TV: the user's custom nickname if set,
@@ -346,32 +407,48 @@ struct RemoteView: View {
         state.discovery.displayName(for: session.device)
     }
 
-    private var settingsMenu: some View {
-        Menu {
+    private var settingsPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            panelHeading("Settings")
             if let session = state.session {
-                Button("Rename…") {
+                settingsRow("Rename", symbol: "pencil") {
                     renameInput = displayName(session)
                     renaming = true
                 }
-                Button("Re-pair") { session.forgetAndRepair() }
-                Button("Forget this TV") {
+                settingsRow("Re-pair", symbol: "key") { session.forgetAndRepair(); panel = .remote }
+                settingsRow("Forget this TV", symbol: "trash", tint: .red) {
                     session.disconnect()
                     state.discovery.forget(session.device)
                     state.session = nil
+                    panel = .devices
                 }
                 Divider()
             }
             LaunchAtLoginToggle()
+                .toggleStyle(.switch)
+                .controlSize(.small)
             Divider()
             Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
-            Button("Quit Universal TV Remote") { NSApp.terminate(nil) }
+                .font(.caption).foregroundStyle(.secondary)
+            settingsRow("Quit Universal TV Remote", symbol: "rectangle.portrait.and.arrow.right") { NSApp.terminate(nil) }
                 .keyboardShortcut("q")
-        } label: {
-            Image(systemName: "gearshape")
-                .foregroundStyle(.secondary)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+    }
+
+    private func settingsRow(_ title: String, symbol: String, tint: Color = .primary,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).frame(width: 20)
+                Text(title).font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(tint)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.05)))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: status + pairing
@@ -465,7 +542,7 @@ struct RemoteView: View {
                     Text(brand.displayName).tag(brand)
                 }
             }
-            .pickerStyle(.menu)
+            .pickerStyle(.radioGroup)
             TextField("IP address (e.g. 192.168.1.42)", text: $manualIP)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(addManualTV)
@@ -509,6 +586,7 @@ struct RemoteView: View {
             state.discovery.rename(device, to: renameInput)
         }
         renaming = false
+        panel = .settings
     }
 
     private func addManualTV() {
@@ -518,6 +596,7 @@ struct RemoteView: View {
         addingManually = false
         manualIP = ""
         state.select(device)
+        panel = .remote
     }
 
     private func submitPIN() {

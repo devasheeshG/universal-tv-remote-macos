@@ -19,6 +19,14 @@ Demo app tiles use letter placeholders.
   <img src="docs/screenshots/remote-disconnected.png" alt="Disconnected Fire TV with a Reconnect button" width="272" />
 </p>
 
+<details>
+<summary>TV selection and settings inside the same window</summary>
+<p>
+  <img src="docs/screenshots/remote-devices.png" alt="Inline TV selector separating live and saved TVs" width="272" />
+  <img src="docs/screenshots/remote-settings.png" alt="Inline settings with rename, re-pair, forget and launch at login" width="272" />
+</p>
+</details>
+
 ## Features
 
 - **Automatic discovery and remembered TVs:** Bonjour and SSDP find TVs on
@@ -52,7 +60,9 @@ Demo app tiles use letter placeholders.
   Remote buttons flash when a keyboard shortcut fires. System media keys
   continue to control your Mac.
 - **Device management:** rename TVs, clear a nickname, re-pair, forget a TV,
-  or add one manually by IP address or hostname.
+  or add one manually by IP address or hostname. TV selection, settings,
+  pairing, rename, and add-TV forms all stay inside the remote window;
+  no separate dropdown panels or dialogs are used.
 - **Launch at Login:** enable it from the settings menu.
 - Compact dark SwiftUI popover with immediate button presses and a pinned
   header when the app list expands. The panel fits its screen, scrolls long

@@ -29,6 +29,8 @@ struct ScreenshotTests {
         let device = DiscoveredTV(id: "fireTV:demo", brand: .fireTV, name: "Living Room", host: "192.0.2.1")
         let discovery = DiscoveryEngine(defaults: defaults)
         discovery.upsert(device)
+        discovery.upsert(DiscoveredTV(id: "fireTV:saved", brand: .fireTV, name: "Bedroom",
+                                     host: "192.0.2.2"), discovered: false)
         let driver = ScreenshotDriver()
         let session = RemoteSession(device: device, driver: driver, defaults: defaults)
         let state = AppState(discovery: discovery, initialSession: session, startsDiscovery: false, defaults: defaults)
@@ -40,6 +42,8 @@ struct ScreenshotTests {
         for (filename, status, expanded) in [("remote-connected.png", SessionState.connected, false),
                                    ("remote-expanded.png", .connected, true),
                                    ("remote-expanded-compact.png", .connected, true),
+                                   ("remote-devices.png", .connected, false),
+                                   ("remote-settings.png", .connected, false),
                                    ("remote-pairing.png", .awaitingPairing(.pin(digits: 4)), false),
                                    ("remote-pairing-android.png", .awaitingPairing(.pin(digits: 6)), false),
                                    ("remote-disconnected.png", .failed("Disconnected — Fire TV remote service is unavailable"), false)] {
@@ -48,7 +52,8 @@ struct ScreenshotTests {
             await Task.yield()
             try await Task.sleep(nanoseconds: 100_000_000)
             let compact = filename == "remote-expanded-compact.png"
-            let view = RemoteView(appsExpanded: expanded, availableHeight: compact ? 620 : nil).environmentObject(state)
+            let panel: RemotePanel = filename == "remote-devices.png" ? .devices : filename == "remote-settings.png" ? .settings : .remote
+            let view = RemoteView(appsExpanded: expanded, availableHeight: compact ? 620 : nil, panel: panel).environmentObject(state)
                 .background(Color(red: 0.10, green: 0.10, blue: 0.11))
             let hosting = NSHostingView(rootView: view)
             hosting.appearance = NSAppearance(named: .darkAqua)
