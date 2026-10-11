@@ -71,12 +71,13 @@ final class SamsungDriver: NSObject, TVDriver, URLSessionWebSocketDelegate, URLS
             onStateChange?(.awaitingPairing(.onScreenAllow))
         }
 
-        // WebSockets to TVs silently die without traffic; a ping every 30 s
-        // keeps the channel (and the TV's interest) alive.
+        // Frequent pings detect a dropped control channel without sending keys.
         DispatchQueue.main.async { [weak self] in
             self?.pingTimer?.invalidate()
-            self?.pingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
-                self?.socket?.sendPing { _ in }
+            self?.pingTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+                self?.socket?.sendPing { error in
+                    if error != nil { self?.onStateChange?(.failed("Samsung TV connection lost")) }
+                }
             }
         }
     }

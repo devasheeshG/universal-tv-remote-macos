@@ -1,88 +1,151 @@
 # Universal TV Remote for Mac
 
-A sleek, minimal **menu-bar remote** for every smart TV on your network.
-Click the TV icon in your Mac's menu bar and control **Fire TV, Android TV /
-Google TV, Samsung, LG, and Roku** — auto-discovered, no configuration files,
-no cloud.
+A native macOS menu-bar remote for **Fire TV, Android / Google TV, Samsung
+Tizen, LG webOS, and Roku**. Open the TV icon in the menu bar to control a
+TV on your local network.
+
+## Screenshots
+
+Connected remote and disconnected state, captured from the actual SwiftUI
+views using an offline demo device. Demo app tiles use letter placeholders.
+
+<p>
+  <img src="docs/screenshots/remote-connected.png" alt="Connected remote with power, direction pad, media controls, volume, text input and app shortcuts" width="272" />
+  <img src="docs/screenshots/remote-disconnected.png" alt="Disconnected Fire TV with a Reconnect button" width="272" />
+</p>
 
 ## Features
 
-- **Auto-discovery** — TVs appear in the picker automatically (Bonjour + SSDP)
-- **Full remote** — power, d-pad + OK, back/home/menu, play/pause, seek, volume
-- **Keyboard text input** — type into TV search boxes from your Mac keyboard
-- **App shortcuts** — one click to Netflix, YouTube, Prime Video & friends
-- **Keyboard control** — while the remote is open, your Mac's arrow keys drive
-  the d-pad, Enter = OK, Esc = back, Space = play/pause
-- **One-time pairing** — PIN on screen (Fire TV / Android TV) or an Allow
-  dialog on the TV (Samsung / LG); Roku needs nothing. Tokens are remembered.
-- Native Swift/SwiftUI. No Electron. ~1 MB binary.
+- **Automatic discovery and remembered TVs:** Bonjour and SSDP find TVs on
+  your local network. Known devices appear immediately at startup. Fire TV
+  service changes and multiple discovery protocols merge into one entry;
+  existing duplicates are cleaned up while keeping pairing credentials,
+  custom names, and the selected TV.
+- **Automatic connection:** restores the last selected, already paired TV
+  at launch and follows discovery updates when its IP address changes.
+  A single paired TV can be selected automatically. New TVs require an
+  explicit selection to begin pairing.
+- **Live connection status:** Fire TV and Roku use read-only checks every
+  three seconds with a two-second request timeout. They recover automatically
+  when the service returns. Other brands report control-channel failures
+  and retry previously paired connections. **Reconnect** appears only while
+  disconnected or after a connection failure.
+- **Full remote:** power, a ring direction pad with OK, back/home/menu,
+  play/pause, rewind/fast-forward, skip controls, volume, and mute.
+- **Text input:** type in the remote's field and press Return to send text
+  to the focused input on your TV.
+- **App shortcuts:** common apps appear immediately; Fire TV, Roku, and LG
+  fetch installed apps, while Samsung checks its supported app catalog.
+  Expand the shortcut row to browse more apps. Android TV uses a curated
+  list of deep links.
+- **Keyboard shortcuts:** while the remote is open and its text field is
+  not focused, arrows navigate; Return selects; Escape/Delete go back;
+  Space plays/pauses; `h` opens Home; `m` mutes; `+`/`-` adjust volume.
+  Remote buttons flash when a keyboard shortcut fires. System media keys
+  continue to control your Mac.
+- **Device management:** rename TVs, clear a nickname, re-pair, forget a TV,
+  or add one manually by IP address or hostname.
+- **Launch at Login:** enable it from the settings menu.
+- Compact dark SwiftUI popover with immediate button presses and a pinned
+  top edge when the app list expands. No cloud account or ADB required.
 
 ## Install
 
-Grab the latest `Universal.TV.Remote.for.Mac.zip` from
-[Releases](../../releases), unzip, drag **Universal TV Remote.app** to
-`/Applications`, and **right-click → Open** the first time (the app is ad-hoc
-signed, not notarized).
+Download `Universal.TV.Remote.for.Mac.zip` from [Releases](../../releases),
+unzip it, move **Universal TV Remote.app** to `/Applications`, and
+**right-click → Open** on the first launch. Requires **macOS 14 or later**.
+The app is ad-hoc signed, not notarized.
 
-On first launch macOS asks to allow **local network** access — this is
-required for discovery. If you dismissed it, re-enable it under
-*System Settings → Privacy & Security → Local Network*.
+Allow local network access when macOS asks. If discovery is blocked, enable
+it in **System Settings → Privacy & Security → Local Network**. Your Mac
+and TV should normally be on the same network; use **Add TV by IP…** when
+automatic discovery cannot reach the TV.
+
+Select a TV to pair. Fire TV shows a four-digit PIN; Android TV shows a
+six-character code. Samsung and LG show an Allow/Deny prompt on the TV.
+Roku does not require pairing. Credentials are remembered for later use.
+
+## Connection status and power
+
+“Connected” means the TV's **remote service** is reachable, rather than a
+measurement of the display's power state. A separately powered Fire TV
+Stick can remain reachable when its attached television is off. Fire TV
+and Roku status changes normally appear within about five seconds of a
+service becoming unreachable, subject to system sleep and network delays.
+
+Automatic connection, monitoring, and Fire TV reconnection do **not** send
+wake commands. Use the power button explicitly to wake or sleep the TV.
+An unavailable TV stays disconnected with a **Reconnect** button. A revoked
+Fire TV token requires **Settings → Re-pair**.
 
 ## Per-brand notes
 
 | Brand | Protocol | Pairing | Power-on |
 |---|---|---|---|
-| Fire TV | Private REST API (`:8080`) | 4-digit PIN on TV | DIAL wake (`:8009`) |
-| Android TV / Google TV | Google Remote v2 (TLS + protobuf, `:6466/6467`) | 6-char code on TV | protocol key |
-| Samsung (Tizen) | WebSocket (`:8002`) | Allow dialog on TV | Wake-on-LAN |
-| LG (webOS) | SSAP WebSocket (`:3001`) | Allow dialog on TV | Wake-on-LAN |
-| Roku | ECP REST (`:8060`) | none | ECP / fast-start |
+| Fire TV | Local REST API (`8080`) | Four-digit PIN | DIAL wake (`8009`) |
+| Android / Google TV | Remote v2 TLS (`6466` / `6467`) | Six-character code | Protocol power key |
+| Samsung Tizen | WebSocket (`8002`) | Allow on TV | Wake-on-LAN with a cached MAC |
+| LG webOS | SSAP WebSocket (`3001`) | Allow on TV | Wake-on-LAN with a cached MAC |
+| Roku | ECP REST (`8060`, or advertised port) | None | ECP / fast-start |
 
-- **Roku OS 14.1+**: enable *Settings → System → Advanced system settings →
-  Control by mobile apps*.
-- **Fire TV**: uses the same local API as the official mobile app — no ADB,
-  no developer options. A few very old Fire OS builds lack this API.
-- **Samsung / LG / Roku** drivers are written faithfully from the reference
-  implementations (Home Assistant's backends) but are untested on real
-  hardware — issue reports welcome.
-- Android TV text input types character-by-character (the full IME protocol
-  isn't implemented); uppercase and exotic symbols are skipped.
+- Fire TV supports Bonjour and Amazon-confirmed DIAL discovery. Some old
+  firmware lacks the local remote API. The power button toggles sleep/wake
+  based on remote-service reachability.
+- Roku OS 14.1+ may require **Settings → System → Advanced system settings
+  → Control by mobile apps → Enabled**.
+- Samsung, LG, and Roku drivers have not been verified on physical hardware
+  by the developer. Available controls and power behavior vary by model.
+- Android TV text input sends characters individually; uppercase and some
+  unusual characters are skipped.
+- App-list queries vary by firmware. A static catalog is used when an
+  installed-app endpoint is unavailable.
 
-## Build from source
+## Build and verify
+
+Requires Xcode command-line tools with Swift 5.9 or later. The Android TV
+protocol dependency is vendored locally under `Vendor/AndroidTVRemoteControl`.
+The regression tests use Swift Testing and require Swift 6 or later.
 
 ```bash
-git clone <this repo>
-cd "TV Remote Dock App"
-bash scripts/build-app.sh          # → build/Universal TV Remote.app
+git clone https://github.com/devasheeshG/universal-tv-remote-macos.git
+cd universal-tv-remote-macos
+swift test
+bash scripts/build-app.sh
 ```
 
-Requires Xcode command-line tools (Swift 5.9+). The only dependency is a
-vendored copy of [AndroidTVRemoteControl](https://github.com/odyshewroman/AndroidTVRemoteControl)
-(MIT) with a 2-line manifest patch for macOS support.
+The app bundle is written to `build/Universal TV Remote.app`. Tests use
+isolated preferences and intercepted network requests; they do not send
+commands to real TVs. To regenerate the README screenshots from the actual
+app views with an offline demo driver:
+
+```bash
+README_SCREENSHOTS="$PWD/docs/screenshots" swift test --filter ScreenshotTests
+```
+
+If the installed beta macOS SDK lacks its SwiftUI macro plugin, select a
+complete SDK explicitly, for example:
+
+```bash
+swift test --sdk /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+```
 
 ## CI/CD
 
-Every push to `main` builds on a macOS runner and publishes a GitHub Release
-(`v1.0.<run>`), with the zipped app attached. Push a `v*` tag to cut an
-explicitly-versioned release. See `.github/workflows/release.yml`.
+Every push to `main` runs tests, builds on a macOS runner, and publishes a
+GitHub Release (`v1.0.<run>`) with the zipped app attached. A `v*` tag creates
+an explicitly versioned release. See
+[release.yml](.github/workflows/release.yml).
 
 ## Architecture
 
-```
-Sources/UniversalTVRemote/
-├── App.swift          entry point + all menu-bar UI
-├── TVController.swift TVDriver protocol, RemoteSession, shared key enum, WoL
-├── Discovery.swift    Bonjour (NWBrowser) + SSDP (BSD socket) scanning
-├── FireTV.swift       one self-contained driver per brand …
-├── AndroidTV.swift
-├── Samsung.swift
-├── LG.swift
-└── Roku.swift
-```
-
-Every driver implements the same five-method `TVDriver` protocol; adding a
-brand is one new file plus one `switch` case.
+`App.swift` owns the menu-bar interface and selection restoration;
+`Discovery.swift` handles discovery, identity merging, and remembered-device
+migration. `TVController.swift` defines device models, session state,
+credential storage, reconnect handling, and the shared driver protocol.
+Each brand has its own driver file. Tests cover duplicate migration,
+credential preservation, Fire TV connection monitoring, and offline
+screenshot generation.
 
 ## License
 
-MIT (vendored AndroidTVRemoteControl library is MIT, © Roman Odyshew).
+MIT. The vendored AndroidTVRemoteControl library is MIT, © Roman Odyshew.

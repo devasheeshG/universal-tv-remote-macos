@@ -31,6 +31,9 @@ jobs:
             echo "version=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Run local-only regression tests
+        run: swift test
+
       - name: Build app bundle
         run: bash scripts/build-app.sh "${{ steps.version.outputs.version }}"
 

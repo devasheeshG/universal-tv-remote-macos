@@ -34,6 +34,7 @@ let package = Package(
                 .product(name: "AndroidTVRemoteControl", package: "AndroidTVRemoteControl")
             ],
             path: "Sources/UniversalTVRemote"
-        )
+        ),
+        .testTarget(name: "UniversalTVRemoteTests", dependencies: ["UniversalTVRemote"])
     ]
 )

@@ -20,8 +20,7 @@
 //      └──────────────────────────────┘
 //
 //  While the popover is open, the physical keyboard drives the TV too:
-//  arrows/Enter/Esc/Space, and the Mac's media keys (play, volume) are
-//  captured and forwarded instead of acting on the Mac.
+//  arrows/Enter/Esc/Space and shortcut letters are captured while open.
 //
 
 import SwiftUI
@@ -29,13 +28,27 @@ import AppKit
 import Combine
 import ServiceManagement
 
+private struct OfflinePreviewKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var offlinePreview: Bool {
+        get { self[OfflinePreviewKey.self] }
+        set { self[OfflinePreviewKey.self] = newValue }
+    }
+}
+
 // MARK: - App state
 
 /// One object owns everything the UI observes: the discovery engine, the
 /// active session, and the keyboard monitors. Sessions are cached per device
 /// so switching TVs doesn't re-pair or drop connections.
 final class AppState: ObservableObject {
-    let discovery = DiscoveryEngine()
+    let discovery: DiscoveryEngine
+    let startsDiscovery: Bool
+    private let defaults: UserDefaults
+    private let makeSession: (DiscoveredTV) -> RemoteSession
     @Published var session: RemoteSession?
     /// True while the text field owns the keyboard; letter/arrow shortcuts
     /// must not fire mid-typing.
@@ -61,27 +74,50 @@ final class AppState: ObservableObject {
     /// session's changes (state, live app list) are forwarded to ours.
     private var sessionForwarder: AnyCancellable?
     private var discoveryForwarder: AnyCancellable?
+    private var deviceForwarder: AnyCancellable?
 
-    init() {
+    init(discovery: DiscoveryEngine = DiscoveryEngine(), initialSession: RemoteSession? = nil,
+         startsDiscovery: Bool = true, defaults: UserDefaults = .standard,
+         makeSession: ((DiscoveredTV) -> RemoteSession)? = nil) {
+        self.discovery = discovery
+        self.startsDiscovery = startsDiscovery
+        self.defaults = defaults
+        self.makeSession = makeSession ?? { RemoteSession(device: $0, defaults: defaults) }
+        self.session = initialSession
         // Forward the discovery engine's changes (new devices, renames) so
         // views observing AppState re-render.
         discoveryForwarder = discovery.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
-        discovery.start()
-        // Reconnect the last-used TV so the remote is live immediately.
-        if let lastID = UserDefaults.standard.string(forKey: "selectedDevice"),
-           let device = discovery.devices.first(where: { $0.id == lastID }) {
-            select(device)
+        if startsDiscovery { discovery.start() }
+        // Observe later discoveries too: the remembered list may be empty
+        // or the selected TV may have changed its DHCP address.
+        deviceForwarder = discovery.$devices.sink { [weak self] devices in
+            self?.restoreSelection(from: devices)
         }
     }
 
+    private func restoreSelection(from devices: [DiscoveredTV]) {
+        let lastID = defaults.string(forKey: "selectedDevice")
+        guard let device = devices.first(where: { $0.id == (session?.device.id ?? lastID) })
+                ?? (session == nil && devices.count == 1 ? devices.first : nil),
+              session == nil || session?.device.host != device.host || session?.device.port != device.port,
+              device.brand == .roku || defaults.string(forKey: "token.\(device.id)") != nil
+        else { return }
+        select(device)
+    }
+
     func select(_ device: DiscoveredTV) {
-        let session = sessions[device.id] ?? RemoteSession(device: device)
+        if self.session?.device.id != device.id { self.session?.disconnect() }
+        if let old = sessions[device.id], old.device.host != device.host || old.device.port != device.port {
+            old.disconnect()
+            sessions[device.id] = nil
+        }
+        let session = sessions[device.id] ?? makeSession(device)
         sessions[device.id] = session
         self.session = session
         sessionForwarder = session.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
-        UserDefaults.standard.set(device.id, forKey: "selectedDevice")
+        defaults.set(device.id, forKey: "selectedDevice")
         // (Re)connect unless a healthy connection already exists.
         switch session.state {
         case .connected, .connecting, .awaitingPairing: break
@@ -184,14 +220,11 @@ struct RemoteView: View {
         .background(.ultraThinMaterial)
         .background(WindowTopPin())
         .preferredColorScheme(.dark)
+        .environment(\.offlinePreview, !state.startsDiscovery)
         .onAppear {
+            guard state.startsDiscovery else { return }
             state.discovery.scan()
             state.installKeyMonitors()
-            // Auto-select the only TV when nothing is selected yet.
-            if state.session == nil, let only = state.discovery.devices.first,
-               state.discovery.devices.count == 1 {
-                state.select(only)
-            }
         }
         .onDisappear { state.removeKeyMonitors() }
         .onChange(of: typingFocused) { _, focused in state.textFieldFocused = focused }
@@ -299,7 +332,12 @@ struct RemoteView: View {
         switch state.session?.state {
         case .none:
             EmptyView()
-        case .idle, .connecting:
+        case .idle:
+            VStack(spacing: 8) {
+                Text("Disconnected").font(.caption).foregroundStyle(.secondary)
+                Button("Reconnect") { state.session?.connect() }.controlSize(.small)
+            }
+        case .connecting:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
                 Text("Connecting…").font(.caption).foregroundStyle(.secondary)
@@ -315,7 +353,7 @@ struct RemoteView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
-                Button("Try Again") { state.session?.connect() }
+                Button("Reconnect") { state.session?.connect() }
                     .controlSize(.small)
             }
         case .awaitingPairing(.onScreenAllow):
@@ -731,6 +769,7 @@ enum AppIconResolver {
 /// letter avatar. (Fetched, not bundled — shipping trademarked logos in the
 /// repo is the alternative nobody wants.)
 struct AppIconButton: View {
+    @Environment(\.offlinePreview) private var offlinePreview
     let app: TVApp
     let size: CGFloat
     let showName: Bool
@@ -741,7 +780,7 @@ struct AppIconButton: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Group {
-                    if let url = artworkURL ?? app.iconURL {
+                    if !offlinePreview, let url = artworkURL ?? app.iconURL {
                         AsyncImage(url: url) { image in
                             // Store artwork is full-bleed; favicons keep a
                             // little breathing room.
@@ -771,6 +810,7 @@ struct AppIconButton: View {
         .buttonStyle(PressableStyle())
         .help(app.name)
         .task(id: app.id) {
+            guard !offlinePreview else { return }
             // The TV's own art wins; the store lookup is only for catalog
             // entries that came without one.
             if app.iconArt == nil {

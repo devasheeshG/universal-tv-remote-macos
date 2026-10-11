@@ -39,52 +39,39 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
     private let device: DiscoveredTV
     private let base: URL
     private var token: String?
+    private var healthTimer: Timer?
+    private var healthTask: URLSessionDataTask?
+    private var generation = 0
+    private var isReachable = false
+    private var authorizationRejected = false
+    private let sessionConfiguration: URLSessionConfiguration
     private lazy var session: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
+        let config = sessionConfiguration
         config.timeoutIntervalForRequest = 6
         // delegate: self → accepts the TV's self-signed certificate.
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
-    init(device: DiscoveredTV) {
+    init(device: DiscoveredTV, configuration: URLSessionConfiguration = .ephemeral) {
         self.device = device
         self.base = URL(string: "https://\(device.host):8080")!
+        self.sessionConfiguration = configuration
     }
 
     // MARK: TVDriver
 
     func connect(token: String?) {
+        generation += 1
+        healthTask?.cancel()
+        healthTask = nil
+        healthTimer?.invalidate()
+        healthTimer = nil
         self.token = token
+        isReachable = false
+        authorizationRejected = false
         if token != nil {
-            // Already paired: a reachability probe is all "connect" means for
-            // a stateless REST protocol. Any HTTP answer (even 404) proves
-            // the service is up; only a transport error means unreachable.
-            var request = URLRequest(url: base)
-            request.allHTTPHeaderFields = headers(includeToken: false)
-            session.dataTask(with: request) { [weak self] _, response, error in
-                guard let self else { return }
-                if response != nil {
-                    self.onStateChange?(.connected)
-                    self.fetchInstalledApps()
-                } else {
-                    // Service down — probably asleep. Fire the DIAL wake and
-                    // re-probe once; Fire TVs need a few seconds to boot it.
-                    self.wakeUp()
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 4) {
-                        var retry = URLRequest(url: self.base)
-                        retry.allHTTPHeaderFields = self.headers(includeToken: false)
-                        self.session.dataTask(with: retry) { _, response2, _ in
-                            if response2 != nil {
-                                self.onStateChange?(.connected)
-                                self.fetchInstalledApps()
-                            } else {
-                                self.onStateChange?(.failed("Fire TV unreachable at \(self.device.host)"))
-                            }
-                        }.resume()
-                    }
-                    _ = error   // transport error details aren't user-useful here
-                }
-            }.resume()
+            // Connecting and background retries must never wake the TV.
+            startHealthMonitoring()
             return
         }
 
@@ -121,13 +108,60 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
                 self.onTokenIssued?(newToken)
                 self.onStateChange?(.connected)
                 self.fetchInstalledApps()
+                DispatchQueue.main.async { self.startHealthMonitoring() }
             } else {
                 self.onStateChange?(.failed("Wrong PIN — pick the TV again to retry"))
             }
         }.resume()
     }
 
-    func disconnect() { onStateChange?(.idle) }
+    func disconnect() {
+        generation += 1
+        healthTimer?.invalidate()
+        healthTimer = nil
+        healthTask?.cancel()
+        healthTask = nil
+        isReachable = false
+        onStateChange?(.idle)
+    }
+
+    /// Bounded, read-only checks also reconnect when the service returns.
+    private func startHealthMonitoring() {
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.checkHealth()
+        }
+        checkHealth()
+    }
+
+    func checkHealth() {
+        guard healthTask == nil, !authorizationRejected else { return }
+        let currentGeneration = generation
+        var request = URLRequest(url: base.appendingPathComponent("v1/FireTV/apps"),
+                                 cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+        request.allHTTPHeaderFields = headers()
+        healthTask = session.dataTask(with: request) { [weak self] _, response, error in
+            DispatchQueue.main.async {
+                guard let self, self.generation == currentGeneration else { return }
+                self.healthTask = nil
+                let status = (response as? HTTPURLResponse)?.statusCode
+                if status == 401 || status == 403 {
+                    self.authorizationRejected = true
+                    self.isReachable = false
+                    self.onStateChange?(.failed("Fire TV rejected our token — use Settings → Re-pair"))
+                } else if error == nil, let status, status < 500 {
+                    let wasReachable = self.isReachable
+                    self.isReachable = true
+                    self.onStateChange?(.connected)
+                    if !wasReachable { self.fetchInstalledApps() }
+                } else {
+                    self.isReachable = false
+                    self.onStateChange?(.failed("Disconnected — Fire TV is asleep or unreachable"))
+                }
+            }
+        }
+        healthTask?.resume()
+    }
 
     func send(_ key: RemoteKey) {
         switch key {
@@ -282,12 +316,17 @@ final class FireTVDriver: NSObject, TVDriver, URLSessionDelegate {
         request.httpMethod = "POST"
         request.allHTTPHeaderFields = headers()
         if let body { request.httpBody = try? JSONSerialization.data(withJSONObject: body) }
-        session.dataTask(with: request) { [weak self] _, response, _ in
+        session.dataTask(with: request) { [weak self] _, response, error in
             // 401/403 = the pairing was revoked on the TV; tell the UI so the
             // user knows to re-pair rather than silently eating presses.
             if let status = (response as? HTTPURLResponse)?.statusCode, status == 401 || status == 403 {
-                self?.onStateChange?(.failed("Fire TV rejected our token — use "
-                    + "Settings → Re-pair to authorize again"))
+                DispatchQueue.main.async {
+                    self?.authorizationRejected = true
+                    self?.onStateChange?(.failed("Fire TV rejected our token — use "
+                        + "Settings → Re-pair to authorize again"))
+                }
+            } else if error != nil {
+                self?.onStateChange?(.failed("Disconnected — Fire TV is asleep or unreachable"))
             }
         }.resume()
     }

@@ -64,6 +64,15 @@ struct DiscoveredTV: Identifiable, Codable, Hashable {
     /// Control port when the protocol needs a specific one (Roku's ECP port
     /// comes from its SSDP LOCATION header; other brands use fixed ports).
     var port: Int?
+
+    /// Fire TV appends a changing session and port to its Bonjour name.
+    /// Only the device component identifies the physical TV.
+    var discoveryIdentity: String {
+        guard brand == .fireTV, id.hasPrefix("fireTV:amzn.dmgr:") else { return id }
+        let parts = id.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count >= 3, !parts[2].isEmpty else { return id }
+        return parts.prefix(3).joined(separator: ":")
+    }
 }
 
 // MARK: - Remote vocabulary
@@ -182,22 +191,41 @@ final class RemoteSession: ObservableObject {
     @Published private(set) var apps: [TVApp] = []
 
     private let driver: TVDriver
+    private var reconnectTimer: Timer?
+    private var isActive = false
+    private let defaults: UserDefaults
     private var tokenKey: String { "token.\(device.id)" }
 
-    init(device: DiscoveredTV) {
+    init(device: DiscoveredTV, driver: TVDriver? = nil, defaults: UserDefaults = .standard) {
         self.device = device
-        self.driver = RemoteSession.makeDriver(for: device)
-        self.apps = driver.apps
+        self.defaults = defaults
+        self.driver = driver ?? RemoteSession.makeDriver(for: device)
+        self.apps = self.driver.apps
 
         // Driver callbacks arrive on arbitrary queues; SwiftUI requires main.
-        driver.onStateChange = { [weak self] newState in
-            DispatchQueue.main.async { self?.state = newState }
+        self.driver.onStateChange = { [weak self] newState in
+            DispatchQueue.main.async {
+                guard let self, self.isActive, newState != .idle else { return }
+                self.state = newState
+                if case .connected = newState {
+                    self.reconnectTimer?.invalidate()
+                    self.reconnectTimer = nil
+                }
+                if case .failed = newState, self.device.brand != .fireTV, self.device.brand != .roku,
+                   self.reconnectTimer == nil,
+                   self.defaults.string(forKey: self.tokenKey) != nil {
+                    self.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+                        self?.reconnectTimer = nil
+                        self?.connect()
+                    }
+                }
+            }
         }
-        driver.onTokenIssued = { [weak self] token in
+        self.driver.onTokenIssued = { [weak self] token in
             guard let self else { return }
-            UserDefaults.standard.set(token, forKey: self.tokenKey)
+            self.defaults.set(token, forKey: self.tokenKey)
         }
-        driver.onAppsChanged = { [weak self] in
+        self.driver.onAppsChanged = { [weak self] in
             DispatchQueue.main.async { self?.apps = self?.driver.apps ?? [] }
         }
     }
@@ -214,19 +242,28 @@ final class RemoteSession: ObservableObject {
     }
 
     func connect() {
+        isActive = true
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
         state = .connecting
-        driver.connect(token: UserDefaults.standard.string(forKey: tokenKey))
+        driver.connect(token: defaults.string(forKey: tokenKey))
     }
 
     /// Wipe the stored credential and pair from scratch (Settings → Re-pair).
     func forgetAndRepair() {
-        UserDefaults.standard.removeObject(forKey: tokenKey)
-        driver.disconnect()
+        defaults.removeObject(forKey: tokenKey)
+        disconnect()
         connect()
     }
 
     func submitPairingCode(_ code: String) { driver.submitPairingCode(code) }
-    func disconnect() { driver.disconnect() }
+    func disconnect() {
+        isActive = false
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        driver.disconnect()
+        state = .idle
+    }
     func send(_ key: RemoteKey) { driver.send(key) }
     func sendText(_ text: String) { driver.sendText(text) }
     func launchApp(_ appID: String) { driver.launchApp(appID) }

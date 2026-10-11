@@ -36,6 +36,13 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// User-chosen nicknames keyed by device id. These always win over the
     /// name the TV broadcasts, and survive re-discovery.
     private var customNames: [String: String] = [:]
+    private var aliases: [String: String] = [:]
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        super.init()
+    }
 
     // MARK: lifecycle
 
@@ -43,15 +50,31 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     /// browsers running for the whole app lifetime (they are cheap and make
     /// Fire/Android TVs appear the moment they join the network).
     func start() {
-        customNames = (UserDefaults.standard.dictionary(forKey: DiscoveryEngine.customNamesKey)
-                       as? [String: String]) ?? [:]
-        if let data = UserDefaults.standard.data(forKey: DiscoveryEngine.rememberedKey),
-           let remembered = try? JSONDecoder().decode([DiscoveredTV].self, from: data) {
-            devices = remembered
-        }
+        loadRememberedDevices()
         startBonjourBrowser(serviceType: "_androidtvremote2._tcp", brand: .androidTV)
         startBonjourBrowser(serviceType: "_amzn-wplay._tcp", brand: .fireTV)
         scan()
+    }
+
+    /// Local-only migration; never starts discovery or contacts a TV.
+    func loadRememberedDevices() {
+        aliases = defaults.dictionary(forKey: "discoveryAliases") as? [String: String] ?? [:]
+        customNames = (defaults.dictionary(forKey: DiscoveryEngine.customNamesKey)
+                       as? [String: String]) ?? [:]
+        if let data = defaults.data(forKey: DiscoveryEngine.rememberedKey),
+           let remembered = try? JSONDecoder().decode([DiscoveredTV].self, from: data) {
+            devices = []
+            // Keep the selected/paired identity so session credentials survive.
+            let selected = defaults.string(forKey: "selectedDevice")
+            let ordered = remembered.sorted {
+                func rank(_ tv: DiscoveredTV) -> Int {
+                    if tv.id == selected { return 0 }
+                    return defaults.string(forKey: "token.\(tv.id)") != nil ? 1 : 2
+                }
+                return rank($0) < rank($1)
+            }
+            for device in ordered { upsert(device) }
+        }
     }
 
     /// SSDP burst (Roku / LG / Samsung). Called on popover open and refresh.
@@ -68,14 +91,14 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     func forget(_ device: DiscoveredTV) {
         devices.removeAll { $0.id == device.id }
         customNames[device.id] = nil
-        UserDefaults.standard.set(customNames, forKey: DiscoveryEngine.customNamesKey)
+        defaults.set(customNames, forKey: DiscoveryEngine.customNamesKey)
         persist()
     }
 
     /// The name to display for a TV: the user's nickname if they set one,
     /// otherwise whatever the TV broadcast.
     func displayName(for device: DiscoveredTV) -> String {
-        customNames[device.id] ?? device.name
+        customNames[device.id] ?? devices.first(where: { $0.id == device.id })?.name ?? device.name
     }
 
     /// Give a TV a custom nickname (Settings → Rename). An empty/blank name
@@ -83,7 +106,7 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     func rename(_ device: DiscoveredTV, to newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         customNames[device.id] = trimmed.isEmpty ? nil : trimmed
-        UserDefaults.standard.set(customNames, forKey: DiscoveryEngine.customNamesKey)
+        defaults.set(customNames, forKey: DiscoveryEngine.customNamesKey)
         objectWillChange.send()   // devices array unchanged; nudge observers
     }
 
@@ -93,9 +116,9 @@ final class DiscoveryEngine: NSObject, ObservableObject {
     func addManual(brand: TVBrand, host: String) -> DiscoveredTV {
         let device = DiscoveredTV(id: "\(brand.rawValue):\(host)", brand: brand,
                                   name: "\(brand.displayName) (\(host))", host: host, port: nil)
-        upsert(device)
-        fetchFriendlyName(for: device)
-        return device
+        let merged = upsert(device)
+        fetchFriendlyName(for: merged)
+        return merged
     }
 
     // MARK: Bonjour (Fire TV + Android TV)
@@ -269,8 +292,9 @@ final class DiscoveryEngine: NSObject, ObservableObject {
         let device = DiscoveredTV(id: "\(brand.rawValue):\(usn)", brand: brand,
                                   name: brand.displayName, host: ip, port: port)
         DispatchQueue.main.async { [weak self] in
-            self?.upsert(device)
-            self?.fetchFriendlyName(for: device)
+            guard let self else { return }
+            let merged = self.upsert(device)
+            self.fetchFriendlyName(for: merged)
         }
     }
 
@@ -339,13 +363,40 @@ final class DiscoveryEngine: NSObject, ObservableObject {
 
     /// Insert or refresh one device, keeping any better name we already had,
     /// and persist so the list survives restarts.
-    private func upsert(_ device: DiscoveredTV) {
-        if let index = devices.firstIndex(where: { $0.id == device.id }) {
+    @discardableResult
+    func upsert(_ incoming: DiscoveredTV) -> DiscoveredTV {
+        let device = DiscoveredTV(id: incoming.discoveryIdentity, brand: incoming.brand,
+                                  name: incoming.name, host: incoming.host, port: incoming.port)
+        let index = devices.firstIndex {
+            $0.id == device.id || $0.id == aliases[device.id]
+                || ($0.brand == device.brand && $0.host == device.host)
+        }
+        let retainedID = index.map { devices[$0].id } ?? device.id
+        if device.id != retainedID {
+            aliases[device.id] = retainedID
+            defaults.set(aliases, forKey: "discoveryAliases")
+        }
+        for alias in Set([incoming.id, device.id]) where alias != retainedID {
+            for prefix in ["token.", "mac."] {
+                if defaults.object(forKey: prefix + retainedID) == nil,
+                   let value = defaults.object(forKey: prefix + alias) {
+                    defaults.set(value, forKey: prefix + retainedID)
+                }
+            }
+            if customNames[retainedID] == nil { customNames[retainedID] = customNames[alias] }
+            customNames[alias] = nil
+            if defaults.string(forKey: "selectedDevice") == alias {
+                defaults.set(retainedID, forKey: "selectedDevice")
+            }
+        }
+        defaults.set(customNames, forKey: DiscoveryEngine.customNamesKey)
+        if let index {
             devices[index].host = device.host
             devices[index].port = device.port ?? devices[index].port
             // Only overwrite the name when the new one is more specific than
             // a bare brand placeholder.
-            if device.name != device.brand.displayName {
+            if device.name != device.brand.displayName,
+               device.name != "Amazon Fling Device" || devices[index].name == device.brand.displayName {
                 devices[index].name = device.name
             }
         } else {
@@ -353,11 +404,12 @@ final class DiscoveryEngine: NSObject, ObservableObject {
             devices.sort { $0.name < $1.name }
         }
         persist()
+        return devices.first { $0.id == retainedID }!
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(devices) {
-            UserDefaults.standard.set(data, forKey: DiscoveryEngine.rememberedKey)
+            defaults.set(data, forKey: DiscoveryEngine.rememberedKey)
         }
     }
 }

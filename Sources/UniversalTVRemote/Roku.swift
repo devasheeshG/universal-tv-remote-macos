@@ -29,6 +29,10 @@ final class RokuDriver: TVDriver {
     private let device: DiscoveredTV
     private let base: URL
     private let session = URLSession(configuration: .ephemeral)
+    private var healthTimer: Timer?
+    private var generation = 0
+    private var checkingHealth = false
+    private var wasConnected = false
     /// Filled from /query/apps on connect so the shortcut row shows what is
     /// actually installed; starts with well-known channel ids as a fallback.
     private var liveApps: [TVApp] = [
@@ -48,24 +52,51 @@ final class RokuDriver: TVDriver {
     // MARK: TVDriver
 
     func connect(token: String?) {
+        generation += 1
+        checkingHealth = false
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.checkHealth()
+        }
+        checkHealth()
+    }
+
+    private func checkHealth() {
+        guard !checkingHealth else { return }
+        checkingHealth = true
+        let currentGeneration = generation
         // No pairing on Roku — "connecting" is just proving the box answers.
         var request = URLRequest(url: base.appendingPathComponent("query/device-info"))
-        request.timeoutInterval = 4
+        request.timeoutInterval = 2
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         session.dataTask(with: request) { [weak self] data, response, error in
-            guard let self else { return }
-            if error != nil || (response as? HTTPURLResponse)?.statusCode != 200 {
-                self.onStateChange?(.failed("Roku not responding — check that "
-                    + "Settings → Advanced → Control by mobile apps is Enabled"))
-                return
+            DispatchQueue.main.async {
+                guard let self, self.generation == currentGeneration else { return }
+                self.checkingHealth = false
+                let xml = String(data: data ?? Data(), encoding: .utf8) ?? ""
+                if error != nil || (response as? HTTPURLResponse)?.statusCode != 200
+                    || xml.contains("<power-mode>DisplayOff</power-mode>")
+                    || xml.contains("<power-mode>Ready</power-mode>") {
+                    self.wasConnected = false
+                    self.onStateChange?(.failed("Disconnected — Roku is asleep or unreachable"))
+                    return
+                }
+                self.onStateChange?(.connected)
+                if !self.wasConnected { self.refreshInstalledApps() }
+                self.wasConnected = true
             }
-            self.onStateChange?(.connected)
-            self.refreshInstalledApps()
         }.resume()
     }
 
     func submitPairingCode(_ code: String) { /* Roku never pairs */ }
 
-    func disconnect() { onStateChange?(.idle) }
+    func disconnect() {
+        generation += 1
+        healthTimer?.invalidate()
+        healthTimer = nil
+        wasConnected = false
+        onStateChange?(.idle)
+    }
 
     func send(_ key: RemoteKey) {
         // Power is the only stateful key: ECP has separate PowerOn/PowerOff,
